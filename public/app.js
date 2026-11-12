@@ -1,7 +1,7 @@
 // İmparator — babanın hisse defteri. Sade, büyük yazılı; veriler Mervan'ın Google Sheet'inde (sunucu üzerinden).
 import { hesapla, sayi, kodTemiz, sirala, BIST, bistAd, TURLER, tavanTaban } from './hesap.js';
 
-const SURUM = 'v6';
+const SURUM = 'v7';
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -382,11 +382,14 @@ async function kayitSil(kimlik) {
 // ---------- Hesapla: kâr, hedef fiyat, ortalama maliyet, tavan/taban ----------
 const HS = ls.al('imp_hesapla', { arac: 'kar' });
 const hsYaz = () => ls.yaz('imp_hesapla', HS);
+let doldurSonra = null;
 const ARACLAR = [['kar', '💰', 'Kâr'], ['hedef', '🎯', 'Hedef'], ['ort', '⚖️', 'Ortalama'], ['tavan', '📈', 'Tavan']];
 function hesaplaSayfasi() {
   const h = hesapla(S.veri?.islemler || [], fiyatlar());
-  const hisseler = [...new Set([...h.acik.map(p => p.kod), ...(S.veri?.takip || [])])];
-  const cipler = hisseler.length ? `<div class="soluk kucuk" style="margin-top:4px">Hisseden doldur:</div><div class="cipler">${hisseler.map(k => `<button class="cip" data-doldur="${k}">${k}</button>`).join('')}</div>` : '';
+  const hisseler = [...new Set([...h.acik.map(p => p.kod), ...(S.veri?.takip || []), ...(HS.secili ? [HS.secili] : [])])];
+  // Arama çubuğu: herhangi bir BIST hissesini bul, fiyatını çek, alanlara doldur. Elindekiler ve takip edilenler baloncuk olarak durur.
+  const cipler = `<div class="ara-kutu"><input id="hAra" class="ara-giris" autocapitalize="characters" autocomplete="off" placeholder="🔍 Hisse ara (ör. ASELS)"><div id="hAraOneri"></div></div>
+    ${hisseler.length ? `<div class="cipler">${hisseler.map(k => `<button class="cip ${HS.secili === k ? 'on' : ''}" data-doldur="${k}">${k}</button>`).join('')}</div>` : ''}<div id="hBilgi" class="soluk kucuk" style="margin-top:6px"></div>`;
   const alan = (id, et, ph = '0', ek = '₺') => `<label class="etiket" for="${id}">${et}</label><div class="alan-ek"><input id="${id}" class="buyuk-giris" inputmode="decimal" placeholder="${ph}" value="${esc(HS[id] ?? '')}">${ek ? `<span>${ek}</span>` : ''}</div>`;
   const kom = sayi(S.veri?.ayar?.komisyon_binde);
   const IC = {
@@ -456,20 +459,46 @@ function hesaplaSayfasi() {
     o.innerHTML = x;
     const an = $('#anaSonuc'); an.innerHTML = ana || `<span class="soluk">${{ kar: 'Alış, satış fiyatı ve adedi yaz', hedef: 'Alış fiyatını yaz, bir yüzde seç', ort: 'Elindeki adet ve ortalamayı, sonra yeni alımı yaz', tavan: 'Önceki kapanış fiyatını yaz' }[HS.arac]}</span>`; an.classList.toggle('bos', !ana);
   };
-  $$('#app input').forEach(i => (i.oninput = hesapYap));
+  $$('#app input:not(#hAra)').forEach(i => (i.oninput = hesapYap));
   if ($('#kKom')) $('#kKom').onchange = hesapYap;
   $$('[data-yuzde]').forEach(b => b.onclick = () => { $('#hYuzde').value = b.dataset.yuzde; hesapYap(); });
   $$('[data-zarar]').forEach(b => b.onclick = () => { $('#hZarar').value = b.dataset.zarar; hesapYap(); });
   $$('#tMarj [data-m]').forEach(b => b.onclick = () => { HS.tMarj = Number(b.dataset.m); hsYaz(); hesaplaSayfasi(); });
   const yaz = (id, val) => { if ($('#' + id)) $('#' + id).value = val ? String(Math.round(val * 100) / 100).replace('.', ',') : ''; };
-  $$('[data-doldur]').forEach(b => b.onclick = () => {
-    const kod = b.dataset.doldur, p = h.acik.find(x => x.kod === kod), f = fiyatlar()[kod];
-    if (HS.arac === 'kar') { yaz('kAlis', p?.ort); yaz('kSatis', f?.fiyat); yaz('kAdet', p?.adet); }
+  const bilgi = kod => { const f = fiyatlar()[kod], ad = bistAd(kod) || f?.ad || ''; $('#hBilgi').innerHTML = kod ? `<b>${kod}</b>${ad ? ' · ' + esc(ad) : ''}${f?.fiyat ? ` · Son <b>${fmt(f.fiyat)} ₺</b>${f.onceki ? ` · Önceki kapanış ${fmt(f.onceki)} ₺` : ''}` : ''}` : ''; };
+  const doldur = kod => {
+    const p = h.acik.find(x => x.kod === kod), f = fiyatlar()[kod];
+    if (HS.arac === 'kar') { yaz('kAlis', p?.ort || f?.fiyat); yaz('kSatis', p ? f?.fiyat : ''); yaz('kAdet', p?.adet); }
     if (HS.arac === 'hedef') yaz('hAlis', p?.ort || f?.fiyat);
     if (HS.arac === 'ort') { yaz('oAdet', p?.adet); yaz('oOrt', p?.ort); yaz('oYFiyat', f?.fiyat); }
-    if (HS.arac === 'tavan') yaz('tBaz', f?.onceki);
-    $$('[data-doldur]').forEach(x => x.classList.toggle('on', x === b)); hesapYap();
-  });
+    if (HS.arac === 'tavan') yaz('tBaz', f?.onceki || f?.fiyat);
+    HS.secili = kod; hsYaz(); $$('[data-doldur]').forEach(x => x.classList.toggle('on', x.dataset.doldur === kod)); bilgi(kod); hesapYap();
+  };
+  $$('[data-doldur]').forEach(b => b.onclick = () => doldur(b.dataset.doldur));
+  // Arama
+  const ara = $('#hAra'), araO = $('#hAraOneri'); let araT;
+  const sec = async (kod, b) => {
+    if (!fiyatlar()[kod]?.fiyat) {
+      if (b) { b.disabled = true; const s2 = b.querySelector('.soluk'); if (s2) s2.textContent = 'fiyat alınıyor…'; }
+      try { const f = await api('fiyat', { kodlar: [kod] }); const x = f.hisseler?.[kod]; if (!x?.fiyat) { if (b) { b.disabled = false; const s2 = b.querySelector('.soluk'); if (s2) s2.textContent = 'bulunamadı'; } return toast(`${kod} diye bir hisse bulamadım, kodu kontrol et`, 3500); } S.fiyat = S.fiyat || {}; S.fiyat.hisseler = { ...fiyatlar(), [kod]: x }; }
+      catch (e) { if (b) b.disabled = false; return toast(e.message); }
+    }
+    ara.blur(); HS.secili = kod; hsYaz(); doldurSonra = kod; hesaplaSayfasi();
+  };
+  const araCiz = () => {
+    const q = kodTemiz(ara.value), qa = ara.value.trim().toLocaleLowerCase('tr');
+    if (!q && !qa) { araO.innerHTML = ''; return; }
+    const l = BIST.filter(([c, a]) => c.startsWith(q) || a.toLocaleLowerCase('tr').includes(qa)).slice(0, 6);
+    const ekle = q && !l.some(x => x[0] === q) ? `<button data-k="${q}"><b>${q}</b><span class="soluk kucuk">bu kodu ara</span></button>` : '';
+    araO.innerHTML = `<div class="oneri-liste">${l.map(([c, a]) => `<button data-k="${c}"><b>${c}</b><span class="soluk kucuk">${esc(a)}</span></button>`).join('')}${ekle}</div>`;
+    $$('[data-k]', araO).forEach(b => b.onclick = () => sec(b.dataset.k, b));
+    clearTimeout(araT);
+    if (!l.length && qa.length >= 3) araT = setTimeout(async () => { try { const r = await api('ara?q=' + encodeURIComponent(qa)); if (r.length && ara.value.trim().toLocaleLowerCase('tr') === qa) { araO.innerHTML = `<div class="oneri-liste">${r.slice(0, 6).map(x => `<button data-k="${x.kod}"><b>${x.kod}</b><span class="soluk kucuk">${esc(x.ad)}</span></button>`).join('')}</div>`; $$('[data-k]', araO).forEach(b => b.onclick = () => sec(b.dataset.k, b)); } } catch { /* yok */ } }, 400);
+  };
+  ara.oninput = () => { const p = ara.selectionStart; ara.value = ara.value.toLocaleUpperCase('tr'); ara.setSelectionRange(p, p); araCiz(); };
+  ara.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); const ilk = $('[data-k]', araO); if (ilk) ilk.click(); } };
+  if (doldurSonra) { const k = doldurSonra; doldurSonra = null; doldur(k); return; }
+  if (HS.secili) bilgi(HS.secili);
   hesapYap();
 }
 

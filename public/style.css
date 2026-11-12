@@ -186,3 +186,6 @@ main { padding: 4px 16px calc(110px + var(--alt)); max-width: 640px; margin: 0 a
 .ust-btn.tema svg { width: 24px; height: 24px; }
 main { -webkit-overflow-scrolling: touch; }
 .bant, .ust { -webkit-transform: translateZ(0); }
+.ara-kutu { margin-bottom: 4px; }
+.ara-giris { width: 100%; font-size: 1.05em; padding: 14px 16px; border-radius: 14px; border: 2px solid var(--cizgi); background: var(--kart); color: inherit; font-weight: 600; }
+.ara-giris:focus { outline: none; border-color: var(--marka); }
