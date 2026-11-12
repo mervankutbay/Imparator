@@ -62,6 +62,16 @@ export function yilKar(islemler, yil) {
   return sirala(islemler).filter(i => String(i.Tarih).startsWith(String(yil)) && h.satisKar[i.Kimlik]).reduce((s, i) => s + h.satisKar[i.Kimlik].kar, 0);
 }
 
+// ---------- Tavan / taban ----------
+// Borsa İstanbul pay piyasası fiyat adımları (fiyat seviyesine göre)
+export function fiyatAdimi(f) { return f < 20 ? 0.01 : f < 50 ? 0.02 : f < 100 ? 0.05 : f < 250 ? 0.1 : f < 500 ? 0.25 : f < 1000 ? 0.5 : f < 2500 ? 1 : 2.5; }
+const yuvarla = (x, a, yon) => { const n = x / a; const r = yon < 0 ? Math.floor(n + 1e-9) : Math.ceil(n - 1e-9); return +(r * a).toFixed(2); };
+// Tavan: baz × (1 + marj), fiyat adımına AŞAĞI; taban: baz × (1 − marj), fiyat adımına YUKARI yuvarlanır
+export function tavanTaban(baz, marj = 10) {
+  const hamT = baz * (1 + marj / 100), hamB = baz * (1 - marj / 100);
+  return { tavan: yuvarla(hamT, fiyatAdimi(hamT), -1), taban: yuvarla(hamB, fiyatAdimi(hamB), 1) };
+}
+
 // BIST'te sık işlem gören hisseler (arama önerisi için; listede olmayan kod da yazılabilir)
 export const BIST = [
   ['AEFES', 'Anadolu Efes'], ['AGHOL', 'Anadolu Grubu Holding'], ['AKBNK', 'Akbank'], ['AKSA', 'Aksa Akrilik'], ['AKSEN', 'Aksa Enerji'], ['ALARK', 'Alarko Holding'], ['ALFAS', 'Alfa Solar'],

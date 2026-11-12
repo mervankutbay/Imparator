@@ -149,3 +149,29 @@ main { padding: 4px 16px calc(110px + var(--alt)); max-width: 640px; margin: 0 a
 .seg4 { display: grid; grid-template-columns: 1fr 1fr; }
 .seg4 button:nth-child(n+3) { padding: 8px 4px; font-size: .85em; }
 @media (prefers-color-scheme: dark) { .btn.al, .btn.sat { color: #0b0b0b; } }
+
+/* Hesapla */
+.arac-izgara { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 6px; }
+.arac { background: var(--kart); border: 2px solid var(--cizgi); border-radius: 16px; padding: 8px 2px; font-weight: 700; font-size: .8em; display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.arac span { font-size: 1.4em; }
+.arac.on { border-color: var(--marka); color: var(--marka); box-shadow: var(--golge); }
+.sonuc { margin-top: 18px; border-top: 2px solid var(--cizgi); padding-top: 12px; }
+.sonuc:empty { display: none; }
+.buyuk-sonuc { font-size: 2.1em; font-weight: 800; text-align: center; letter-spacing: -.02em; }
+.ortala { text-align: center; }
+.onay-sat { display: flex; align-items: center; gap: 10px; margin-top: 14px; font-weight: 600; }
+.onay-sat input { width: 26px; height: 26px; -webkit-appearance: checkbox; appearance: auto; }
+.tablo { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.tablo th { text-align: left; color: var(--soluk); font-size: .8em; padding: 6px 4px; }
+.tablo td { padding: 8px 4px; border-top: 1px solid var(--cizgi); font-weight: 700; }
+.tablo td:first-child { color: var(--soluk); font-weight: 600; }
+.sekmeler button { font-size: .68em; }
+
+.ana-sonuc { position: sticky; top: calc(62px + var(--ust)); z-index: 15; margin: 12px 0 0; background: var(--marka); color: var(--buton-yazi); border-radius: 20px; padding: 14px 18px; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; box-shadow: 0 6px 18px rgba(0,0,0,.15); }
+.ana-sonuc b { font-size: 1.7em; font-weight: 800; letter-spacing: -.01em; font-variant-numeric: tabular-nums; }
+.ana-sonuc .soluk { color: inherit; opacity: .75; }
+.ana-sonuc .arti { color: #7cf0ad; } .ana-sonuc .eksi { color: #ff9c9c; }
+.ana-sonuc .hap.arti { background: rgba(124,240,173,.18); } .ana-sonuc .hap.eksi { background: rgba(255,156,156,.18); }
+.ana-sonuc .ikili { width: 100%; }
+.ana-sonuc.bos { background: var(--kart); color: var(--yazi); box-shadow: var(--golge); }
+@media (prefers-color-scheme: dark) { .ana-sonuc .arti { color: #0a7f45; } .ana-sonuc .eksi { color: #b3261e; } }

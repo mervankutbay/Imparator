@@ -1,7 +1,7 @@
 // İmparator — babanın hisse defteri. Sade, büyük yazılı; veriler Mervan'ın Google Sheet'inde (sunucu üzerinden).
-import { hesapla, sayi, kodTemiz, sirala, BIST, bistAd, TURLER } from './hesap.js';
+import { hesapla, sayi, kodTemiz, sirala, BIST, bistAd, TURLER, tavanTaban } from './hesap.js';
 
-const SURUM = 'v1';
+const SURUM = 'v2';
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -84,7 +84,7 @@ function anahtarsiz() {
 }
 
 // ---------- Sekmeler ----------
-const SAYFA = { hesap: hesapSayfasi, defter: defterSayfasi, piyasa: piyasaSayfasi, imparator: imparatorSayfasi };
+const SAYFA = { hesap: hesapSayfasi, defter: defterSayfasi, hesapla: hesaplaSayfasi, piyasa: piyasaSayfasi, imparator: imparatorSayfasi };
 function sekmeGit(s, geriden = false) {
   if (!geriden && s !== S.sekme) { if (S.sekme === 'hesap') history.pushState({ s }, ''); else if (s === 'hesap') { yoksay++; history.back(); } }
   S.sekme = s; ciz(); scrollTo(0, 0);
@@ -280,6 +280,100 @@ async function kaydet(kayit, duzenle) {
 async function kayitSil(kimlik) {
   const once = S.veri.islemler; S.veri.islemler = once.filter(i => i.Kimlik !== kimlik); yenidenCiz(); toast('Silindi');
   try { veriKoy(await api('islem', { sil: kimlik })); yenidenCiz(); } catch (e) { S.veri.islemler = once; yenidenCiz(); toast('Silinemedi: ' + e.message, 5000); }
+}
+
+// ---------- Hesapla: kâr, hedef fiyat, ortalama maliyet, tavan/taban ----------
+const HS = ls.al('imp_hesapla', { arac: 'kar' });
+const hsYaz = () => ls.yaz('imp_hesapla', HS);
+const ARACLAR = [['kar', '💰', 'Kâr'], ['hedef', '🎯', 'Hedef'], ['ort', '⚖️', 'Ortalama'], ['tavan', '📈', 'Tavan']];
+function hesaplaSayfasi() {
+  const h = hesapla(S.veri?.islemler || [], fiyatlar());
+  const hisseler = [...new Set([...h.acik.map(p => p.kod), ...(S.veri?.takip || [])])];
+  const cipler = hisseler.length ? `<div class="soluk kucuk" style="margin-top:4px">Hisseden doldur:</div><div class="cipler">${hisseler.map(k => `<button class="cip" data-doldur="${k}">${k}</button>`).join('')}</div>` : '';
+  const alan = (id, et, ph = '0', ek = '₺') => `<label class="etiket" for="${id}">${et}</label><div class="alan-ek"><input id="${id}" class="buyuk-giris" inputmode="decimal" placeholder="${ph}" value="${esc(HS[id] ?? '')}">${ek ? `<span>${ek}</span>` : ''}</div>`;
+  const kom = sayi(S.veri?.ayar?.komisyon_binde);
+  const IC = {
+    kar: `${cipler}${alan('kAlis', 'Alış fiyatı')}${alan('kSatis', 'Satış fiyatı')}${alan('kAdet', 'Adet', '0', 'adet')}
+      <label class="onay-sat"><input type="checkbox" id="kKom" ${HS.kKom !== false && kom ? 'checked' : ''} ${kom ? '' : 'disabled'}> Komisyonu düş ${kom ? `(binde ${fmt(kom, 2)})` : '<span class="soluk kucuk">— Ayarlar’dan oran girersen</span>'}</label>`,
+    hedef: `${cipler}${alan('hAlis', 'Alış fiyatı (ya da ortalama maliyet)')}
+      <label class="etiket">İstediğin getiri</label><div class="cipler">${[5, 10, 15, 20, 30, 50, 100].map(y => `<button class="cip" data-yuzde="${y}">%${y}</button>`).join('')}</div>
+      ${alan('hYuzde', 'Getiri yüzdesi', 'ör. 10', '%')}
+      <label class="etiket">Zarar durdurma</label><div class="cipler">${[3, 5, 7, 10, 15].map(y => `<button class="cip" data-zarar="${y}">−%${y}</button>`).join('')}</div>
+      ${alan('hZarar', 'Zarar yüzdesi', 'ör. 5', '%')}`,
+    ort: `${cipler}${alan('oAdet', 'Elindeki adet', '0', 'adet')}${alan('oOrt', 'Şu anki ortalama maliyet')}
+      <div class="baslik" style="margin-left:2px">Yeni alım</div>${alan('oYAdet', 'Alınacak adet', '0', 'adet')}${alan('oYFiyat', 'Alış fiyatı')}
+      <div class="baslik" style="margin-left:2px">Ya da: ortalamayı kaça düşürmek istiyorsun?</div>${alan('oHedef', 'Hedef ortalama')}`,
+    tavan: `${cipler}${alan('tBaz', 'Önceki kapanış (baz fiyat)')}
+      <label class="etiket">Günlük fiyat marjı</label><div class="seg" id="tMarj">${[10, 20].map(m => `<button data-m="${m}" class="${(HS.tMarj || 10) === m ? 'on' : ''}">%${m}</button>`).join('')}</div>`,
+  };
+  app().innerHTML = `<div class="arac-izgara">${ARACLAR.map(([k, i, a]) => `<button class="arac ${HS.arac === k ? 'on' : ''}" data-arac="${k}"><span>${i}</span>${a}</button>`).join('')}</div>
+    <div class="ana-sonuc" id="anaSonuc"></div>
+    <div class="kart">${IC[HS.arac]}<div class="sonuc" id="sonuc"></div></div>
+    ${HS.arac === 'tavan' ? '<p class="soluk kucuk" style="margin:0 6px">Tavan fiyat adımına aşağı, taban yukarı yuvarlanır (Borsa İstanbul kuralı). Kesin değer için aracı kurum ekranına bak.</p>' : ''}`;
+  $$('[data-arac]').forEach(b => b.onclick = () => { HS.arac = b.dataset.arac; hsYaz(); hesaplaSayfasi(); });
+  const v = id => sayi($('#' + id)?.value);
+  const satir = (a, d, sinif = '') => `<div class="ozet-satir"><span>${a}</span><b class="say ${sinif}">${d}</b></div>`;
+  const hesapYap = () => {
+    $$('#app input.buyuk-giris').forEach(i => { HS[i.id] = i.value; }); if ($('#kKom')) HS.kKom = $('#kKom').checked; hsYaz();
+    const o = $('#sonuc'); let x = '', ana = '';
+    if (HS.arac === 'kar') {
+      const a = v('kAlis'), st = v('kSatis'), n = v('kAdet') || 1, oran = $('#kKom')?.checked ? kom / 1000 : 0;
+      if (a && st) {
+        const komT = (a + st) * n * oran, brut = (st - a) * n, net = brut - komT, gy = (net / (a * n * (1 + oran))) * 100;
+        ana = `<span class="soluk kucuk">Net kâr / zarar</span><b class="${renk(net)}">${isaretli(net)}</b><span class="hap ${renk(net)}">${net >= 0 ? '▲' : '▼'} ${yuzde(gy)}</span>`;
+        x = satir('Fiyat farkı (1 adet)', `${st - a >= 0 ? '+' : '−'}${fmt(Math.abs(st - a))} ₺ (${st >= a ? '+' : '−'}${yuzde((st / a - 1) * 100)})`)
+          + satir('Alış tutarı', tl(a * n)) + satir('Satış tutarı', tl(st * n)) + (oran ? satir('Komisyon (alış + satış)', '−' + tl(komT)) : '') + satir('Net kâr / zarar', isaretli(net), renk(net));
+      }
+    } else if (HS.arac === 'hedef') {
+      const a = v('hAlis'), y = v('hYuzde'), z = v('hZarar'), oran = kom / 1000;
+      if (a) {
+        const f1 = y ? a * (1 + y / 100) : null, f2 = z ? a * (1 - z / 100) : null;
+        ana = `<div class="ikili" style="margin:0"><div><span class="soluk kucuk">%${fmt(y || 0, y % 1 ? 1 : 0)} kâr için sat</span><b class="arti">${f1 ? fmt(f1) + ' ₺' : '—'}</b></div><div><span class="soluk kucuk">%${fmt(z || 0, z % 1 ? 1 : 0)} zararda dur</span><b class="eksi">${f2 ? fmt(f2) + ' ₺' : '—'}</b></div></div>`;
+        if (y && oran) x += satir('Kâr hedefi komisyon dahil', fmt(a * (1 + oran) * (1 + y / 100) / (1 - oran)) + ' ₺');
+        if (y) x += satir('Fiyat farkı', '+' + fmt(f1 - a) + ' ₺');
+        if (z) x += satir('Zarar durdurmada fark', '−' + fmt(a - f2) + ' ₺');
+      }
+    } else if (HS.arac === 'ort') {
+      const A = v('oAdet'), O = v('oOrt'), yA = v('oYAdet'), yF = v('oYFiyat'), H = v('oHedef');
+      if (A && O && yA && yF) {
+        const t = A + yA, yeni = (A * O + yA * yF) / t;
+        ana = `<span class="soluk kucuk">Yeni ortalama maliyet</span><b>${fmt(yeni)} ₺</b><span class="hap ${renk(O - yeni)}">${yeni <= O ? '▼' : '▲'} ${fmt(Math.abs(yeni - O))} ₺</span>`;
+        x += satir('Toplam adet', adetFmt(t)) + satir('Toplam maliyet', tl(A * O + yA * yF)) + satir('Yeni alım tutarı', tl(yA * yF));
+      }
+      if (A && O && H && yF) {
+        if ((yF < H && H < O) || (yF > H && H > O)) { const n = Math.ceil(A * (O - H) / (H - yF)); x += `<div class="ozet-kutu">${fmt(yF)} ₺’den <b>${adetFmt(n)} adet</b> (${tl(n * yF)}) alırsan ortalaman ${fmt(H)} ₺ olur.</div>`; if (!ana) ana = `<span class="soluk kucuk">${fmt(H)} ₺ ortalama için</span><b>${adetFmt(n)} adet al</b>`; }
+        else x += `<div class="ozet-kutu soluk">Hedef ortalama, şu anki ortalama ile alış fiyatı arasında olmalı.</div>`;
+      }
+
+    } else {
+      const b = v('tBaz'), m = HS.tMarj || 10;
+      if (b) {
+        const t1 = tavanTaban(b, m);
+        ana = `<div class="ikili" style="margin:0"><div><span class="soluk kucuk">Bugünkü tavan</span><b class="arti">${fmt(t1.tavan)} ₺</b></div><div><span class="soluk kucuk">Bugünkü taban</span><b class="eksi">${fmt(t1.taban)} ₺</b></div></div>`;
+        x = '';
+        let tv = b, tb = b; const sat = [];
+        for (let g = 1; g <= 5; g++) { tv = tavanTaban(tv, m).tavan; tb = tavanTaban(tb, m).taban; sat.push(`<tr><td>${g}. gün</td><td class="arti">${fmt(tv)} <span class="cok-kucuk">(+${fmt((tv / b - 1) * 100, 1)}%)</span></td><td class="eksi">${fmt(tb)} <span class="cok-kucuk">(−${fmt((1 - tb / b) * 100, 1)}%)</span></td></tr>`); }
+        x += `<div class="etiket">Art arda tavan / taban olursa</div><table class="tablo"><tr><th></th><th>Tavan</th><th>Taban</th></tr>${sat.join('')}</table>`;
+      }
+    }
+    o.innerHTML = x;
+    const an = $('#anaSonuc'); an.innerHTML = ana || `<span class="soluk">${{ kar: 'Alış, satış fiyatı ve adedi yaz', hedef: 'Alış fiyatını yaz, bir yüzde seç', ort: 'Elindeki adet ve ortalamayı, sonra yeni alımı yaz', tavan: 'Önceki kapanış fiyatını yaz' }[HS.arac]}</span>`; an.classList.toggle('bos', !ana);
+  };
+  $$('#app input').forEach(i => (i.oninput = hesapYap));
+  if ($('#kKom')) $('#kKom').onchange = hesapYap;
+  $$('[data-yuzde]').forEach(b => b.onclick = () => { $('#hYuzde').value = b.dataset.yuzde; hesapYap(); });
+  $$('[data-zarar]').forEach(b => b.onclick = () => { $('#hZarar').value = b.dataset.zarar; hesapYap(); });
+  $$('#tMarj [data-m]').forEach(b => b.onclick = () => { HS.tMarj = Number(b.dataset.m); hsYaz(); hesaplaSayfasi(); });
+  const yaz = (id, val) => { if ($('#' + id)) $('#' + id).value = val ? String(Math.round(val * 100) / 100).replace('.', ',') : ''; };
+  $$('[data-doldur]').forEach(b => b.onclick = () => {
+    const kod = b.dataset.doldur, p = h.acik.find(x => x.kod === kod), f = fiyatlar()[kod];
+    if (HS.arac === 'kar') { yaz('kAlis', p?.ort); yaz('kSatis', f?.fiyat); yaz('kAdet', p?.adet); }
+    if (HS.arac === 'hedef') yaz('hAlis', p?.ort || f?.fiyat);
+    if (HS.arac === 'ort') { yaz('oAdet', p?.adet); yaz('oOrt', p?.ort); yaz('oYFiyat', f?.fiyat); }
+    if (HS.arac === 'tavan') yaz('tBaz', f?.onceki);
+    $$('[data-doldur]').forEach(x => x.classList.toggle('on', x === b)); hesapYap();
+  });
+  hesapYap();
 }
 
 // ---------- Piyasa ----------

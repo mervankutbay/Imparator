@@ -13,7 +13,7 @@ import { fiyatlar, ara, PIYASA } from './piyasa.js';
 import { gemini, kisilik, veriOzeti, ISLEM_KURALI, analizIstemi, analizAyir, bugunTR } from './imparator.js';
 import { hesapla, kodTemiz, sayi, TURLER } from '../public/hesap.js';
 
-const SURUM = 'v1';
+const SURUM = 'v2';
 const json = (o, status = 200) => new Response(JSON.stringify(o), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } });
 const esit = (a, b) => { if (!a || !b || a.length !== b.length) return false; let d = 0; for (let i = 0; i < a.length; i++) d |= a.charCodeAt(i) ^ b.charCodeAt(i); return d === 0; };
 const yetkili = (k, env) => esit(String(k || ''), String(env.GIZLI || ''));
