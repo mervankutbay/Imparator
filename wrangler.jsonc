@@ -1,0 +1,11 @@
+{
+  // İmparator — Cloudflare Worker (site + defter + yapay zekâ)
+  "name": "imparator",
+  "main": "src/worker.js",
+  "compatibility_date": "2026-10-01",
+  "assets": { "directory": "./public", "binding": "ASSETS", "run_worker_first": ["/api/*"] },
+  // Hafta içi İstanbul saatiyle 08:45 sabah analizi, 18:45 akşam analizi (UTC 05:45 ve 15:45)
+  "triggers": { "crons": ["45 5 * * 1-5", "45 15 * * 1-5"] },
+  "keep_vars": true,
+  "observability": { "enabled": true }
+}
