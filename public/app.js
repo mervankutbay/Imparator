@@ -316,6 +316,7 @@ function islemFormu(baslangic = {}) {
     if (!kayit.Hisse) return toast('Hisse kodunu yaz');
     if (tur !== 'Temettü' && !(kayit.Adet > 0)) return toast('Adedi yaz');
     if (tur !== 'Bedelsiz' && !(kayit.Fiyat > 0)) return toast(tur === 'Temettü' ? 'Tutarı yaz' : 'Fiyatı yaz');
+    if (!bistAd(kayit.Hisse) && !fiyatlar()[kayit.Hisse]?.fiyat && !duzenle) return onay(`${kayit.Hisse} bulunamadı`, 'Borsa İstanbul’da bu kodla bir hisse bulamadım. Kodu doğru yazdığına emin misin?', () => { w.kapat(); kaydet(kayit, duzenle); }, { evetYazi: 'Yine de kaydet' });
     if (tur === 'Satış') { const e = elde(kayit.Hisse); if (!e || kayit.Adet - e.adet > 1e-9) return onay('Elinde bu kadar yok', `Defterde ${kayit.Hisse} için ${e ? adetFmt(e.adet) : 0} adet görünüyor. Yine de kaydedilsin mi?`, () => { w.kapat(); kaydet(kayit, duzenle); }, { evetYazi: 'Kaydet' }); }
     w.kapat(); kaydet(kayit, duzenle);
   };
@@ -439,7 +440,9 @@ function hesaplaSayfasi() {
 
 // ---------- Piyasa ----------
 function piyasaSatiri(ad, alt, f, birim = '₺', veri = '') {
-  if (!f || f.hata || !f.fiyat) return `<div class="oge"><div class="bosluk"><div class="ad">${esc(ad)}</div>${alt ? `<div class="soluk kucuk">${esc(alt)}</div>` : ''}</div><div class="soluk">—</div></div>`;
+  // Fiyatı gelmeyen satır da dokunulabilir kalır (ör. yanlış yazılmış kod takipten çıkarılabilsin)
+  if (!f || f.hata || !f.fiyat) return veri ? `<button class="oge tikla" ${veri}><div class="bosluk"><div class="ad">${esc(ad)}</div><div class="soluk kucuk">${f?.hata ? 'Fiyat bulunamadı · dokun' : esc(alt || '')}</div></div><div class="soluk">—</div></button>`
+    : `<div class="oge"><div class="bosluk"><div class="ad">${esc(ad)}</div>${alt ? `<div class="soluk kucuk">${esc(alt)}</div>` : ''}</div><div class="soluk">—</div></div>`;
   const k = f.fiyat >= 10000 ? 0 : f.fiyat >= 100 ? 2 : f.fiyat < 1 ? 4 : 2;
   return `<button class="oge tikla" ${veri}><div class="bosluk"><div class="ad">${esc(ad)}</div>${alt ? `<div class="soluk kucuk">${esc(alt)}</div>` : ''}</div>
     <div class="sag"><div class="fiyat say">${fmt(f.fiyat, k)}${birim === '%' ? '%' : birim ? ' ' + birim : ''}</div><span class="hap ${renk(f.degisim)}">${f.degisim >= 0 ? '▲' : '▼'} ${yuzde(f.degisim)}</span></div></button>`;
@@ -489,7 +492,16 @@ function takipEkle() {
     const q = kodTemiz($('#tkKod', w).value), qa = $('#tkKod', w).value.trim().toLocaleLowerCase('tr');
     const l = q ? BIST.filter(([c, a]) => c.startsWith(q) || a.toLocaleLowerCase('tr').includes(qa)).slice(0, 8) : [];
     $('#tkOneri', w).innerHTML = `<div class="oneri-liste">${l.map(([c, a]) => `<button data-k="${c}"><b>${c}</b><span class="soluk kucuk">${esc(a)}</span></button>`).join('')}${q && !l.some(x => x[0] === q) ? `<button data-k="${q}"><b>${q}</b><span class="soluk kucuk">bu kodu ekle</span></button>` : ''}</div>`;
-    $$('[data-k]', w).forEach(b => b.onclick = () => { w.kapat(); takipDegis(b.dataset.k, true); });
+    $$('[data-k]', w).forEach(b => b.onclick = async () => {
+      const kod = b.dataset.k;
+      // Listede olmayan kod: önce Borsa İstanbul'da gerçekten var mı bak (yanlış yazılan kod takibe girmesin)
+      if (!bistAd(kod)) {
+        b.disabled = true; b.querySelector('.soluk').textContent = 'kontrol ediliyor…';
+        try { const f = await api('fiyat', { kodlar: [kod] }); const h = f.hisseler?.[kod]; if (!h?.fiyat) { b.disabled = false; b.querySelector('.soluk').textContent = 'bulunamadı'; return toast(`${kod} diye bir hisse bulamadım, kodu kontrol et`, 3500); } S.fiyat.hisseler = { ...fiyatlar(), [kod]: h }; }
+        catch (e) { b.disabled = false; return toast(e.message); }
+      }
+      w.kapat(); takipDegis(kod, true);
+    });
   };
   $('#tkKod', w).oninput = () => { $('#tkKod', w).value = $('#tkKod', w).value.toLocaleUpperCase('tr'); ciz(); };
   setTimeout(() => $('#tkKod', w)?.focus(), 250);
