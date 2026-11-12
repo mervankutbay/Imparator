@@ -3,14 +3,13 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#f4f4f1" media="(prefers-color-scheme: light)">
-  <meta name="theme-color" content="#0d0f13" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#f4f4f1" id="temaRenk">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="İmparator">
   <title>İmparator</title>
-  <script>try { document.documentElement.dataset.boyut = localStorage.getItem('imp_boyut') || ''; } catch (e) {}</script>
+  <script>try { var d = document.documentElement; d.dataset.boyut = localStorage.getItem('imp_boyut') || ''; var t = localStorage.getItem('imp_tema'); if (t) d.dataset.tema = t; } catch (e) {}</script>
   <script>
     // Ana ekrana eklenen uygulama anahtarla açılsın diye manifest anahtarlı adresten gelir
     (function () { var k = new URLSearchParams(location.search).get('k'); try { k = k || JSON.parse(localStorage.getItem('imp_anahtar') || '""'); } catch (e) {}
@@ -24,6 +23,7 @@
 <body>
   <header class="ust hidden" id="ust">
     <h1><img class="tac" src="img/tac.svg" alt="">İmparator</h1>
+    <button class="ust-btn tema" id="temaBtn" aria-label="Gece modu"></button>
     <button class="ust-btn" id="ayarBtn" aria-label="Ayarlar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></button>
   </header>
   <main id="app"></main>

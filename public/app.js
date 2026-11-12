@@ -1,7 +1,7 @@
 // İmparator — babanın hisse defteri. Sade, büyük yazılı; veriler Mervan'ın Google Sheet'inde (sunucu üzerinden).
 import { hesapla, sayi, kodTemiz, sirala, BIST, bistAd, TURLER, tavanTaban } from './hesap.js';
 
-const SURUM = 'v2';
+const SURUM = 'v3';
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -47,24 +47,79 @@ const fiyatlar = () => S.fiyat?.hisseler || {};
 // ---------- Ortak arayüz ----------
 let toastT;
 function toast(m, ms = 2800) { const t = $('#toast'); t.textContent = m; t.classList.add('on'); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('on'), ms); }
-// Alttan açılan pencere. Telefonun geri hareketi de kapatır.
+// ---------- Geri tuşu ve kaydırma (Nébula / Dudestreet gibi) ----------
+// Geri: önce açık pencere kapanır; diğer sekmelerden Hesabım'a dönülür (kaldığı yerden); Hesabım'da iki kez basınca çıkılır.
+let yoksay = 0, yoksayZaman = 0, geriSon = 0;
+const kuyruk = [];
+function sira(fn) { kuyruk.push(fn); isle(); }
+function isle() {
+  if (yoksay > 0 && Date.now() - yoksayZaman > 1500) yoksay = 0;   // gelmeyen bir dönüş kuyruğu kilitlemesin
+  while (kuyruk.length && yoksay === 0) kuyruk.shift()();
+  if (kuyruk.length) setTimeout(isle, 40);
+}
+const geriGit = () => sira(() => { yoksay++; yoksayZaman = Date.now(); history.back(); });
+const kayitIt = tip => sira(() => history.pushState({ t: tip }, ''));
+const kaydirma = {};   // sekme → son kaydırma yeri
+
+// Pencere açıkken arkadaki sayfa kıpırdamasın (iPhone'da da çalışan yöntem)
+let kilitY = 0;
+function arkaKilit(ac) {
+  const b = document.body;
+  if (ac && !b.classList.contains('pencere-acik')) { kilitY = scrollY; b.style.top = `-${kilitY}px`; b.classList.add('pencere-acik'); }
+  if (!ac && b.classList.contains('pencere-acik')) { b.classList.remove('pencere-acik'); b.style.top = ''; scrollTo(0, kilitY); }
+}
+
+// Alttan açılan pencere: dışına dokununca, aşağı kaydırınca ya da geri tuşuyla kapanır
 function pencere(html) {
   const perde = document.createElement('div'); perde.className = 'perde';
   perde.innerHTML = `<div class="pencere" role="dialog" aria-modal="true"><div class="tutamac"></div>${html}</div>`;
-  document.body.appendChild(perde); document.body.classList.add('pencere-acik');
+  document.body.appendChild(perde); arkaKilit(true);
   const ic = perde.firstElementChild;
-  let kapandi = false, itildi = false;
-  // Önceki pencerenin geri dönüşü bitmeden yeni kayıt eklenmez (yoksa geçmiş kayar)
-  const it = () => { if (kapandi) return; if (yoksay > 0) return setTimeout(it, 30); history.pushState({ p: 1 }, ''); itildi = true; };
-  const kapat = (geriden) => { if (kapandi) return; kapandi = true; perde.remove(); if (!$('.perde')) document.body.classList.remove('pencere-acik'); if (!geriden && itildi) { yoksay++; history.back(); } };
+  let kapandi = false, itildi = false, iptal = false;
+  sira(() => { if (iptal) return; history.pushState({ t: 'pencere' }, ''); itildi = true; });
+  const kapat = geriden => {
+    if (kapandi) return; kapandi = true; perde.classList.add('kapaniyor');
+    ic.style.transition = 'transform .2s ease-in'; ic.style.transform = 'translateY(105%)'; perde.style.transition = 'opacity .2s'; perde.style.opacity = '0';
+    setTimeout(() => { perde.remove(); if (!$('.perde')) arkaKilit(false); }, 190);
+    if (!$('.perde:not(.kapaniyor)')) yenidenCiz();
+    if (!itildi) { iptal = true; return; }
+    if (!geriden) geriGit();
+  };
   perde.addEventListener('click', e => { if (e.target === perde) kapat(); });
-  it();
+  kaydirKapat(ic, () => kapat());
   perde._kapat = kapat;
   ic.kapat = () => kapat();
   return ic;
 }
-let yoksay = 0;   // kendi history.back() çağrılarımızdan gelen dönüşler
-addEventListener('popstate', () => { if (yoksay > 0) { yoksay--; return; } const p = $$('.perde').pop(); if (p) p._kapat(true); else if (S.sekme !== 'hesap') { sekmeGit('hesap', true); } });
+// Pencereyi tutamaçtan (ya da en üstteyken içerikten) aşağı çekince kapat
+function kaydirKapat(ic, kapat) {
+  let y0 = null, dy = 0, t0 = 0, aktif = false;
+  ic.addEventListener('touchstart', e => {
+    const ust = e.touches[0].clientY - ic.getBoundingClientRect().top < 48;
+    if ((!ust && ic.scrollTop > 0) || (!ust && e.target.closest('input, textarea, select'))) { y0 = null; return; }
+    y0 = e.touches[0].clientY; dy = 0; t0 = Date.now(); aktif = false;
+  }, { passive: true });
+  ic.addEventListener('touchmove', e => {
+    if (y0 === null) return;
+    dy = e.touches[0].clientY - y0;
+    if (dy > 6 && (ic.scrollTop <= 0 || aktif)) { aktif = true; if (e.cancelable) e.preventDefault(); ic.style.transition = 'none'; ic.style.transform = `translateY(${dy}px)`; }
+  }, { passive: false });
+  ic.addEventListener('touchend', () => {
+    if (y0 === null || !aktif) { y0 = null; return; }
+    if (dy > 110 || dy / Math.max(1, Date.now() - t0) > 0.6) kapat();
+    else { ic.style.transition = 'transform .2s ease-out'; ic.style.transform = ''; }
+    y0 = null; aktif = false;
+  });
+}
+addEventListener('popstate', () => {
+  if (yoksay > 0) { yoksay--; isle(); return; }
+  const p = $$('.perde:not(.kapaniyor)').pop();
+  if (p) { p._kapat(true); return; }
+  if (S.sekme !== 'hesap') { sekmeGit('hesap', true); return; }
+  if (Date.now() - geriSon < 2200) { history.back(); return; }
+  geriSon = Date.now(); toast('Çıkmak için bir kez daha geri bas');
+  kayitIt('uygulama');
+});
 function onay(baslik, metin, evet, { evetYazi = 'Evet', tehlike = false } = {}) {
   const p = pencere(`<h2>${esc(baslik)}</h2>${metin ? `<p class="soluk">${esc(metin)}</p>` : ''}<div class="iki-btn"><button class="btn ikinci" data-h>Vazgeç</button><button class="btn ${tehlike ? 'sat' : ''}" data-e>${esc(evetYazi)}</button></div>`);
   $('[data-h]', p).onclick = () => p.kapat();
@@ -86,8 +141,13 @@ function anahtarsiz() {
 // ---------- Sekmeler ----------
 const SAYFA = { hesap: hesapSayfasi, defter: defterSayfasi, hesapla: hesaplaSayfasi, piyasa: piyasaSayfasi, imparator: imparatorSayfasi };
 function sekmeGit(s, geriden = false) {
-  if (!geriden && s !== S.sekme) { if (S.sekme === 'hesap') history.pushState({ s }, ''); else if (s === 'hesap') { yoksay++; history.back(); } }
-  S.sekme = s; ciz(); scrollTo(0, 0);
+  if (s === S.sekme) { scrollTo({ top: 0, behavior: 'smooth' }); return; }   // aynı sekmeye dokununca başa dön
+  kaydirma[S.sekme] = scrollY;
+  if (!geriden) { if (S.sekme === 'hesap') kayitIt('sekme'); else if (s === 'hesap') geriGit(); }
+  S.sekme = s; ciz();
+  // Hesabım'a dönünce kaldığı yerden, diğer sekmeler baştan açılır
+  const y = s === 'hesap' ? (kaydirma.hesap || 0) : 0;
+  requestAnimationFrame(() => scrollTo(0, s === 'imparator' && S.impSeg === 'sohbet' ? document.body.scrollHeight : y));
 }
 function ciz() {
   $('#ust').classList.remove('hidden'); $('#sekmeler').classList.remove('hidden');
@@ -95,7 +155,8 @@ function ciz() {
   if (S.sekme !== 'imparator' || S.impSeg !== 'sohbet') $('.yazma')?.remove();
   SAYFA[S.sekme]();
 }
-function yenidenCiz() { if (!$('.perde')) { const y = scrollY; SAYFA[S.sekme](); scrollTo(0, y); } }
+// Açık pencere yoksa sayfayı yeniden çizer (pencere kapanırken de çizilir; kaydırma yeri korunur)
+function yenidenCiz() { if ($('.perde:not(.kapaniyor)')) return; if (document.body.classList.contains('pencere-acik')) { SAYFA[S.sekme](); return; } const y = scrollY; SAYFA[S.sekme](); scrollTo(0, y); }
 
 // ---------- Hesabım ----------
 function hesapSayfasi() {
@@ -603,6 +664,8 @@ function islemBagla() {
 function ayarlar() {
   const a = S.veri?.ayar || {};
   const w = pencere(`<h2>Ayarlar</h2>
+    <label class="etiket">Görünüm</label><div class="seg" id="aTema"><button data-t="">Otomatik</button><button data-t="acik">Açık</button><button data-t="koyu">Gece</button></div>
+    <p class="soluk kucuk">Otomatik: telefon gece moduna geçince uygulama da koyu olur.</p>
     <label class="etiket">Yazı boyutu</label><div class="seg" id="aBoyut"><button data-b="">Büyük</button><button data-b="cok">Çok büyük</button></div>
     <label class="etiket" for="aHitap">İmparator sana nasıl hitap etsin?</label><input id="aHitap" maxlength="40" value="${esc(a.hitap || 'Aydın Bey')}">
     <label class="etiket" for="aKom">Komisyon oranı (binde)</label><input id="aKom" inputmode="decimal" placeholder="ör. 2 (binde 2)" value="${esc(String(a.komisyon_binde || '').replace('.', ','))}">
@@ -610,16 +673,33 @@ function ayarlar() {
     <button class="btn" id="aKaydet">Kaydet</button>
     <button class="btn ikinci" id="aGuncelle" style="margin-top:10px">Uygulamayı güncelle</button>
     <p class="soluk cok-kucuk" style="text-align:center">İmparator ${SURUM} · Defter Google Sheet’te tutulur</p>`);
+  const tm = localStorage.getItem('imp_tema') || '';
+  $$('#aTema button', w).forEach(b => { b.classList.toggle('on', b.dataset.t === tm); b.onclick = () => { temaUygula(b.dataset.t); $$('#aTema button', w).forEach(x => x.classList.toggle('on', x === b)); }; });
   const boyut = localStorage.getItem('imp_boyut') || '';
   $$('#aBoyut button', w).forEach(b => { b.classList.toggle('on', b.dataset.b === boyut); b.onclick = () => { localStorage.setItem('imp_boyut', b.dataset.b); document.documentElement.dataset.boyut = b.dataset.b; $$('#aBoyut button', w).forEach(x => x.classList.toggle('on', x === b)); }; });
   $('#aKaydet', w).onclick = async () => { $('#aKaydet', w).disabled = true; try { veriKoy(await api('ayar', { hitap: $('#aHitap', w).value.trim() || 'Aydın Bey', komisyon_binde: $('#aKom', w).value })); w.kapat(); toast('Kaydedildi'); yenidenCiz(); } catch (e) { toast(e.message); $('#aKaydet', w).disabled = false; } };
   $('#aGuncelle', w).onclick = async () => { try { (await navigator.serviceWorker?.getRegistrations?.() || []).forEach(r => r.unregister()); (await caches.keys()).forEach(k => caches.delete(k)); } catch { /* yok */ } location.reload(); };
 }
 
+// ---------- Görünüm: otomatik (telefona uyar) / açık / koyu ----------
+const AY = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>';
+const GUNES = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4.5"/><path d="M12 1.5v2.5M12 20v2.5M4.6 4.6l1.8 1.8M17.6 17.6l1.8 1.8M1.5 12H4M20 12h2.5M4.6 19.4l1.8-1.8M17.6 6.4l1.8-1.8"/></svg>';
+const sistemKoyu = matchMedia('(prefers-color-scheme: dark)');
+const koyuMu = () => { const t = localStorage.getItem('imp_tema'); return t ? t === 'koyu' : sistemKoyu.matches; };
+function temaUygula(t) {
+  if (t !== undefined) { if (t) localStorage.setItem('imp_tema', t); else localStorage.removeItem('imp_tema'); }
+  const v = localStorage.getItem('imp_tema'); if (v) document.documentElement.dataset.tema = v; else delete document.documentElement.dataset.tema;
+  $('#temaRenk')?.setAttribute('content', koyuMu() ? '#0d0f13' : '#f4f4f1');
+  const b = $('#temaBtn'); if (b) { b.innerHTML = koyuMu() ? GUNES : AY; b.setAttribute('aria-label', koyuMu() ? 'Açık mod' : 'Gece modu'); }
+}
+sistemKoyu.addEventListener?.('change', () => temaUygula());
+
 // ---------- Açılış ----------
 async function baslat() {
   $$('#sekmeler button').forEach(b => b.onclick = () => sekmeGit(b.dataset.s));
+  if (!history.state?.t) { history.replaceState({ t: 'kok' }, ''); history.pushState({ t: 'uygulama' }, ''); }
   $('#ayarBtn').onclick = ayarlar;
+  temaUygula(); $('#temaBtn').onclick = () => temaUygula(koyuMu() ? 'acik' : 'koyu');
   if (!S.anahtar) return anahtarsiz();
   if (S.veri) ciz(); else app().innerHTML = '<div class="giris"><img class="avatar" src="img/aydin.png" alt=""><p class="soluk">Defter açılıyor…</p></div>';
   try { await veriYukle(); ciz(); } catch (e) { if (S.anahtar) toast('Defter okunamadı: ' + e.message, 5000); if (!S.veri) return; }
