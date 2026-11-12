@@ -39,6 +39,7 @@ export async function gemini(env, { system, contents, arama = true, hafif = fals
     }
   }
   if (son && /quota|exhausted|429/i.test(son.message)) throw new Error('Gemini günlük kotası doldu; biraz sonra tekrar dene.');
+  if (son && (son.status >= 500 || /overloaded|unavailable|internal/i.test(son.message))) throw new Error('Gemini şu an çok yoğun; biraz sonra tekrar dene.');
   throw son || new Error('Gemini cevap vermedi');
 }
 

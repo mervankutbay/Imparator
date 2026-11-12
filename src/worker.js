@@ -13,7 +13,7 @@ import { fiyatlar, ara, PIYASA } from './piyasa.js';
 import { gemini, kisilik, veriOzeti, ISLEM_KURALI, analizIstemi, analizAyir, bugunTR } from './imparator.js';
 import { hesapla, kodTemiz, sayi, TURLER } from '../public/hesap.js';
 
-const SURUM = 'v5';
+const SURUM = 'v6';
 const json = (o, status = 200) => new Response(JSON.stringify(o), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } });
 const esit = (a, b) => { if (!a || !b || a.length !== b.length) return false; let d = 0; for (let i = 0; i < a.length; i++) d |= a.charCodeAt(i) ^ b.charCodeAt(i); return d === 0; };
 const yetkili = (k, env) => esit(String(k || ''), String(env.GIZLI || ''));
@@ -77,7 +77,12 @@ export default {
       if (p === '/api/veri') return json({ ...(await veri(env)), surum: SURUM });
       if (p === '/api/islem' && request.method === 'POST') {
         const b = await request.json();
-        if (Array.isArray(b.ekle) && b.ekle.length) await SH.ekle(env, 'İşlemler', b.ekle.slice(0, 60).map(k => islemIc(k)));
+        if (Array.isArray(b.ekle) && b.ekle.length) {
+          // Aynı kayıt iki kez gelirse (internet kopup yeniden gönderilince) bir kez yazılır
+          const var_ = new Set(((await SH.hepsiniOku(env))['İşlemler'] || []).map(r => String(r.Kimlik)));
+          const yeni = b.ekle.slice(0, 60).map(k => islemIc(k)).filter(k => !var_.has(k.Kimlik));
+          if (yeni.length) await SH.ekle(env, 'İşlemler', yeni);
+        }
         if (b.duzelt?.Kimlik) {
           const t = (await SH.hepsiniOku(env))['İşlemler'] || [], eski = t.find(r => String(r.Kimlik) === String(b.duzelt.Kimlik));
           if (!eski) throw new Error('Kayıt bulunamadı');

@@ -1,7 +1,7 @@
 // İmparator — babanın hisse defteri. Sade, büyük yazılı; veriler Mervan'ın Google Sheet'inde (sunucu üzerinden).
 import { hesapla, sayi, kodTemiz, sirala, BIST, bistAd, TURLER, tavanTaban } from './hesap.js';
 
-const SURUM = 'v5';
+const SURUM = 'v6';
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -28,13 +28,39 @@ const S = {
 
 // ---------- Sunucu ----------
 async function api(yol, govde) {
-  const r = await fetch('/api/' + yol, { method: govde === undefined ? 'GET' : 'POST', headers: { 'content-type': 'application/json', 'x-anahtar': S.anahtar }, body: govde === undefined ? undefined : JSON.stringify(govde) });
+  let r;
+  try { r = await fetch('/api/' + yol, { method: govde === undefined ? 'GET' : 'POST', headers: { 'content-type': 'application/json', 'x-anahtar': S.anahtar }, body: govde === undefined ? undefined : JSON.stringify(govde) }); }
+  catch { const e = new Error('İnternet bağlantısı yok'); e.ag = true; throw e; }
   const j = await r.json().catch(() => ({}));
   if (r.status === 401 && j.giris) { S.anahtar = ''; ls.yaz('imp_anahtar', ''); anahtarsiz(); throw new Error('Bağlantı geçersiz'); }
   if (!r.ok) throw new Error(j.hata || 'Bağlantı sorunu');
   return j;
 }
-function veriKoy(v) { S.veri = { islemler: v.islemler || [], analizler: v.analizler || [], takip: v.takip || [], ayar: v.ayar || {} }; ls.yaz('imp_veri', S.veri); }
+function veriKoy(v) { S.veri = { islemler: v.islemler || [], analizler: v.analizler || [], takip: v.takip || [], ayar: v.ayar || {} }; bekleyenUygula(); ls.yaz('imp_veri', S.veri); }
+// ---------- İnternet yokken yapılan kayıtlar: telefonda bekler, bağlantı gelince deftere yazılır ----------
+let dk = ls.al('imp_kuyruk', []);
+const kuyrukYaz = () => ls.yaz('imp_kuyruk', dk);
+function bekleyenUygula() {
+  if (!S.veri || !dk.length) return;
+  for (const k of dk) {
+    if (k.ekle) k.ekle.forEach(y => { if (!S.veri.islemler.some(i => i.Kimlik === y.Kimlik)) S.veri.islemler.push(y); });
+    if (k.duzelt) S.veri.islemler = S.veri.islemler.map(i => i.Kimlik === k.duzelt.Kimlik ? { ...i, ...k.duzelt } : i);
+    if (k.sil) S.veri.islemler = S.veri.islemler.filter(i => i.Kimlik !== k.sil);
+  }
+}
+let gonderiliyor = false;
+async function kuyrukGonder() {
+  if (gonderiliyor || !dk.length || !S.anahtar) return;
+  gonderiliyor = true;
+  try {
+    let son = null;
+    while (dk.length) { son = await api('islem', dk[0]); dk.shift(); kuyrukYaz(); }
+    if (son) { veriKoy(son); yenidenCiz(); toast('Bekleyen kayıtlar deftere yazıldı ✓'); }
+  } catch (e) { if (!e.ag) { toast('Bekleyen bir kayıt yazılamadı: ' + e.message, 5000); dk.shift(); kuyrukYaz(); } }
+  finally { gonderiliyor = false; }
+}
+addEventListener('online', () => kuyrukGonder());
+setInterval(() => { if (dk.length && navigator.onLine !== false) kuyrukGonder(); }, 20000);
 async function veriYukle() { veriKoy(await api('veri')); }
 const kodlar = () => { const h = hesapla(S.veri?.islemler || []); return [...new Set([...h.acik.map(p => p.kod), ...(S.veri?.takip || [])])]; };
 let fiyatZaman = 0;
@@ -173,6 +199,7 @@ function hesapSayfasi() {
       </div>
     </div>
     <div class="iki-btn"><button class="btn al" id="aldim">＋ Aldım</button><button class="btn sat" id="sattim">－ Sattım</button></div>
+    ${dk.length ? `<div class="uyari">⏳ ${dk.length} kayıt internet bekliyor; bağlanınca deftere yazılacak.</div>` : ''}
     ${h.uyarilar.map(u => `<div class="uyari">⚠️ ${esc(u)}</div>`).join('')}
     <div class="baslik">Hisselerim</div>
     ${h.acik.length ? `<div class="liste">${h.acik.map(p => `
@@ -316,6 +343,7 @@ function islemFormu(baslangic = {}) {
     if (!kayit.Hisse) return toast('Hisse kodunu yaz');
     if (tur !== 'Temettü' && !(kayit.Adet > 0)) return toast('Adedi yaz');
     if (tur !== 'Bedelsiz' && !(kayit.Fiyat > 0)) return toast(tur === 'Temettü' ? 'Tutarı yaz' : 'Fiyatı yaz');
+    if (tur === 'Bedelsiz' && !elde(kayit.Hisse) && !duzenle) return onay(`Elinde ${kayit.Hisse} görünmüyor`, 'Bedelsiz, elindeki hisseye eklenir. Önce alışını girmen gerekiyor olabilir. Yine de kaydedilsin mi?', () => { w.kapat(); kaydet(kayit, duzenle); }, { evetYazi: 'Yine de kaydet' });
     if (!bistAd(kayit.Hisse) && !fiyatlar()[kayit.Hisse]?.fiyat && !duzenle) return onay(`${kayit.Hisse} bulunamadı`, 'Borsa İstanbul’da bu kodla bir hisse bulamadım. Kodu doğru yazdığına emin misin?', () => { w.kapat(); kaydet(kayit, duzenle); }, { evetYazi: 'Yine de kaydet' });
     if (tur === 'Satış') { const e = elde(kayit.Hisse); if (!e || kayit.Adet - e.adet > 1e-9) return onay('Elinde bu kadar yok', `Defterde ${kayit.Hisse} için ${e ? adetFmt(e.adet) : 0} adet görünüyor. Yine de kaydedilsin mi?`, () => { w.kapat(); kaydet(kayit, duzenle); }, { evetYazi: 'Kaydet' }); }
     w.kapat(); kaydet(kayit, duzenle);
@@ -333,15 +361,22 @@ async function kaydet(kayit, duzenle) {
   S.veri.islemler = duzenle ? once.map(i => i.Kimlik === kayit.Kimlik ? yeni : i) : [...once, yeni];
   yenidenCiz();
   toast(duzenle ? 'Düzeltildi ✓' : kayit.Tur === 'Satış' ? 'Satış deftere yazıldı ✓' : 'Deftere yazıldı ✓');
+  const govde = duzenle ? { duzelt: yeni } : { ekle: [yeni] };
+  if (dk.length) { dk.push(govde); kuyrukYaz(); yenidenCiz(); return kuyrukGonder(); }   // sıra bozulmasın
   try {
-    veriKoy(await api('islem', duzenle ? { duzelt: yeni } : { ekle: [yeni] }));
+    veriKoy(await api('islem', govde));
     if (!fiyatlar()[yeni.Hisse]) fiyatYukle().catch(() => {});
     yenidenCiz();
-  } catch (e) { S.veri.islemler = once; yenidenCiz(); toast('Kaydedilemedi: ' + e.message, 5000); }
+  } catch (e) {
+    if (e.ag) { dk.push(govde); kuyrukYaz(); yenidenCiz(); return toast('İnternet yok. Kayıt telefonda bekliyor, bağlanınca deftere yazılacak.', 5000); }
+    S.veri.islemler = once; yenidenCiz(); toast('Kaydedilemedi: ' + e.message, 5000);
+  }
 }
 async function kayitSil(kimlik) {
   const once = S.veri.islemler; S.veri.islemler = once.filter(i => i.Kimlik !== kimlik); yenidenCiz(); toast('Silindi');
-  try { veriKoy(await api('islem', { sil: kimlik })); yenidenCiz(); } catch (e) { S.veri.islemler = once; yenidenCiz(); toast('Silinemedi: ' + e.message, 5000); }
+  if (dk.length) { dk.push({ sil: kimlik }); kuyrukYaz(); return kuyrukGonder(); }
+  try { veriKoy(await api('islem', { sil: kimlik })); yenidenCiz(); }
+  catch (e) { if (e.ag) { dk.push({ sil: kimlik }); kuyrukYaz(); return toast('İnternet yok. Silme, bağlanınca deftere işlenecek.', 5000); } S.veri.islemler = once; yenidenCiz(); toast('Silinemedi: ' + e.message, 5000); }
 }
 
 // ---------- Hesapla: kâr, hedef fiyat, ortalama maliyet, tavan/taban ----------
@@ -518,7 +553,7 @@ function analizHTML(a, acik) {
     const t = s.trim();
     if (!t) return o;
     if (t.startsWith('## ')) return o + `<h4>${t.slice(3)}</h4>`;
-    if (/^[-•*] /.test(t)) return o + `<ul><li>${t.slice(2).replace(/^([A-ZÇĞİÖŞÜ0-9]{3,6}):/, '<b>$1:</b>')}</li></ul>`;
+    if (/^[-•*] /.test(t)) return o + `<ul><li>${t.slice(2).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/^([A-ZÇĞİÖŞÜ0-9]{3,6}):/, '<b>$1:</b>')}</li></ul>`;
     return o + `<p>${t.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')}</p>`;
   }, '').replace(/<\/ul><ul>/g, '');
   return `<div class="kart analiz"><div class="imp-bas"><img class="avatar" src="img/aydin.png" alt=""><div class="bosluk"><b>İmparator</b><div class="soluk kucuk">${esc(a.Tur)} analizi · ${tarihYaz(a.Tarih)} ${esc(a.Saat)}</div></div></div>
@@ -588,7 +623,7 @@ function mesajHTML(m, i) {
 let ek = null;
 function sohbetBolumu() {
   const ONERI = ['Bugün piyasa nasıl?', 'Portföyümü değerlendir', 'Dolar ve altın ne durumda?', 'Bu hafta neye dikkat edeyim?'];
-  $('#impIc').innerHTML = `<div class="msjlar" id="msjlar">${S.sohbet.map(mesajHTML).join('') || `<div class="msj o">Piyasa da defter de önümüzde. Ne düşünüyoruz, bir bakalım? Aldığımızı sattığımızı da söyle, deftere yazalım.</div>`}</div><div style="height:${S.sohbet.length ? 150 : 190}px"></div>`;
+  $('#impIc').innerHTML = `${S.sohbet.length ? '<div style="text-align:right;margin-top:6px"><button class="btn hayalet" id="yeniSohbet" style="width:auto;min-height:40px;display:inline-flex">Yeni sohbet</button></div>' : ''}<div class="msjlar" id="msjlar">${S.sohbet.map(mesajHTML).join('') || `<div class="msj o">Piyasa da defter de önümüzde. Ne düşünüyoruz, bir bakalım? Aldığımızı sattığımızı da söyle, deftere yazalım.</div>`}</div><div style="height:${S.sohbet.length ? 150 : 190}px"></div>`;
   if (!$('.yazma')) {
     const y = document.createElement('div'); y.className = 'yazma';
     y.innerHTML = `<div class="oneriler" id="oneriler">${S.sohbet.length ? '' : ONERI.map(o => `<button class="cip" data-o="${esc(o)}">${esc(o)}</button>`).join('')}</div><div id="ekOn"></div>
@@ -604,6 +639,7 @@ function sohbetBolumu() {
     $('#mik').onclick = sesle;
   }
   ekCiz(); islemBagla();
+  $('#yeniSohbet')?.addEventListener('click', () => onay('Yeni sohbet başlasın mı?', 'Bu telefondaki konuşma geçmişi silinir. Defter ve analizler yerinde kalır.', () => { S.sohbet = []; ls.yaz('imp_sohbet', []); $('.yazma')?.remove(); sohbetBolumu(); }, { evetYazi: 'Başlat' }));
   requestAnimationFrame(() => scrollTo(0, document.body.scrollHeight));
 }
 function ekCiz() { const o = $('#ekOn'); if (!o) return; o.innerHTML = ek ? `<div class="ek-on"><img src="data:${ek.mime};base64,${ek.data}" alt=""><span class="bosluk kucuk">Fotoğraf hazır. İstersen ne yapayım yaz, ya da direkt gönder.</span><button class="ikon" style="width:44px;height:44px;border:0" id="ekSil">✕</button></div>` : ''; if (ek) $('#ekSil').onclick = () => { ek = null; ekCiz(); }; }
@@ -651,8 +687,7 @@ async function gonder() {
     S.mesgul = false; return;
   }
   S.mesgul = false; ls.yaz('imp_sohbet', S.sohbet.slice(-60));
-  $('#msjlar').innerHTML = S.sohbet.map(mesajHTML).join(''); islemBagla();
-  scrollTo(0, document.body.scrollHeight);
+  sohbetBolumu();
 }
 function islemBagla() {
   $$('[data-iptal]').forEach(b => b.onclick = () => { S.sohbet[Number(b.dataset.iptal)].durum = 'iptal'; ls.yaz('imp_sohbet', S.sohbet); sohbetBolumu(); });
@@ -715,7 +750,7 @@ async function baslat() {
   temaUygula(); $('#temaBtn').onclick = () => temaUygula(koyuMu() ? 'acik' : 'koyu');
   if (!S.anahtar) return anahtarsiz();
   if (S.veri) ciz(); else app().innerHTML = '<div class="giris"><img class="avatar" src="img/aydin.png" alt=""><p class="soluk">Defter açılıyor…</p></div>';
-  try { await veriYukle(); ciz(); } catch (e) { if (S.anahtar) toast('Defter okunamadı: ' + e.message, 5000); if (!S.veri) return; }
+  try { await veriYukle(); ciz(); kuyrukGonder(); } catch (e) { if (S.anahtar) toast('Defter okunamadı: ' + e.message, 5000); if (!S.veri) return; }
   try { await fiyatYukle(); yenidenCiz(); } catch { /* fiyat yoksa da çalışır */ }
 }
 // Ekrana dönünce (60 sn'den eskiyse) fiyatları yenile; piyasa ekranı açıkken dakikada bir
