@@ -2,10 +2,10 @@
 // Görevleri: siteyi sunmak, defteri Mervan'ın Google Sheet'ine okuyup yazmak (servis hesabıyla), piyasa fiyatları,
 // İmparator'un sohbeti ve hafta içi her sabah/akşam kendiliğinden yazdığı analiz. Hiçbir veri burada saklanmaz.
 //
+// Şifre yok: babanın telefonu bir kez özel bağlantıyla açılır (…/?k=GIZLI), anahtar telefonda saklanır.
 // Gizli değişkenler (Cloudflare > Workers > imparator > Settings > Variables and Secrets):
-//   PIN             Babanın telefonda bir kez gireceği şifre (6 hane önerilir)
-//   GIZLI           Rastgele uzun bir metin (oturum anahtarı bundan üretilir; değiştirirsen herkes yeniden şifre girer)
-//   GOOGLE_SA_JSON  Servis hesabı anahtar dosyasının tamamı (Nébula'dakiyle aynısı olabilir)
+//   GIZLI           Rastgele uzun bir metin = erişim anahtarı (bağlantıdaki k=…; değiştirirsen eski bağlantı çalışmaz)
+//   GOOGLE_SA_JSON  Servis hesabı anahtar dosyasının tamamı (Nébula'dakiyle aynı servis hesabı olabilir)
 //   SHEET_ID        Defterin Google Sheet adresi ya da kimliği (Sheet servis hesabıyla Düzenleyen olarak paylaşılmalı)
 //   GEMINI_KEY      Gemini API anahtarı
 import * as SH from './sheets.js';
@@ -15,21 +15,8 @@ import { hesapla, kodTemiz, sayi, TURLER } from '../public/hesap.js';
 
 const SURUM = 'v1';
 const json = (o, status = 200) => new Response(JSON.stringify(o), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } });
-const hex = b => [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')).join('');
-async function oturumAnahtari(env) {
-  const k = await crypto.subtle.importKey('raw', new TextEncoder().encode(String(env.GIZLI || 'imparator') + '|' + String(env.PIN || '')), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
-  return hex(await crypto.subtle.sign('HMAC', k, new TextEncoder().encode('imparator-oturum')));
-}
-const esit = (a, b) => { if (a.length !== b.length) return false; let d = 0; for (let i = 0; i < a.length; i++) d |= a.charCodeAt(i) ^ b.charCodeAt(i); return d === 0; };
-
-// Yanlış şifre denemelerini sınırla (IP başına 15 dakikada 8 deneme)
-async function denemeSay(ip, artir) {
-  const c = typeof caches !== 'undefined' ? caches.default : null; if (!c) return 0;
-  const key = new Request('https://imparator.local/deneme/' + encodeURIComponent(ip));
-  const h = await c.match(key); let n = h ? Number(await h.text()) || 0 : 0;
-  if (artir) { n++; await c.put(key, new Response(String(n), { headers: { 'cache-control': 'max-age=900' } })).catch(() => {}); }
-  return n;
-}
+const esit = (a, b) => { if (!a || !b || a.length !== b.length) return false; let d = 0; for (let i = 0; i < a.length; i++) d |= a.charCodeAt(i) ^ b.charCodeAt(i); return d === 0; };
+const yetkili = (k, env) => esit(String(k || ''), String(env.GIZLI || ''));
 
 // Sheet satırlarını uygulamanın biçimine çevir
 const isoTarih = v => { const s = String(v || '').trim(); const m = s.match(/^(\d{1,2})[./](\d{1,2})[./](\d{4})/); return m ? `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}` : s.slice(0, 10); };
@@ -76,17 +63,16 @@ export default {
         let sa = null, sheet = false, hata = null;
         try { sa = SH.servisHesabi(env).client_email; } catch (e) { hata = e.message; }
         if (sa && SH.sheetKimlik(env)) { try { await SH.hazirla(env); sheet = true; } catch (e) { hata = e.message; } }
-        return json({ surum: SURUM, pin: !!env.PIN, gizli: !!env.GIZLI, gemini: !!env.GEMINI_KEY, servisHesabi: sa, sheet, hata });
+        return json({ surum: SURUM, gizli: !!env.GIZLI, gemini: !!env.GEMINI_KEY, servisHesabi: sa, sheet, hata });
       }
-      if (p === '/api/giris' && request.method === 'POST') {
-        const ip = request.headers.get('cf-connecting-ip') || 'yerel';
-        if (await denemeSay(ip, false) >= 8) return json({ hata: 'Çok fazla deneme. 15 dakika sonra tekrar dene.' }, 429);
-        const b = await request.json().catch(() => ({}));
-        if (!env.PIN) return json({ hata: 'Sunucuda PIN tanımlı değil' }, 500);
-        if (!esit(String(b.pin || ''), String(env.PIN))) { await denemeSay(ip, true); await new Promise(r => setTimeout(r, 1200)); return json({ hata: 'Şifre yanlış' }, 401); }
-        return json({ anahtar: await oturumAnahtari(env), surum: SURUM });
+      // Ana ekrana eklenirken anahtar kaybolmasın: uygulama bağlantısı anahtarla açılır
+      if (p === '/api/manifest') {
+        const k = url.searchParams.get('k') || '', ok = yetkili(k, env);
+        return new Response(JSON.stringify({ name: 'İmparator', short_name: 'İmparator', start_url: ok ? '/?k=' + encodeURIComponent(k) : '/', scope: '/', display: 'standalone', background_color: '#f4f4f1', theme_color: '#f4f4f1', lang: 'tr',
+          icons: [{ src: '/img/icon-192.png', sizes: '192x192', type: 'image/png' }, { src: '/img/icon-512.png', sizes: '512x512', type: 'image/png' }] }), { headers: { 'content-type': 'application/manifest+json', 'cache-control': 'no-store' } });
       }
-      if (!esit(String(request.headers.get('x-anahtar') || ''), await oturumAnahtari(env))) return json({ hata: 'oturum', giris: true }, 401);
+      if (!env.GIZLI) return json({ hata: 'Sunucuda GIZLI tanımlı değil' }, 500);
+      if (!yetkili(request.headers.get('x-anahtar'), env)) return json({ hata: 'anahtar', giris: true }, 401);
 
       if (p === '/api/veri') return json({ ...(await veri(env)), surum: SURUM });
       if (p === '/api/islem' && request.method === 'POST') {

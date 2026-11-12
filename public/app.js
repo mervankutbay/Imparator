@@ -18,6 +18,9 @@ const tarihYaz = t => { const [y, m, g] = String(t).split('-').map(Number); retu
 const tarihKisa = t => { const [, m, g] = String(t).split('-').map(Number); return g ? `${g} ${AYLAR[m - 1].slice(0, 3)}` : t; };
 const app = () => $('#app');
 
+// Bağlantıdaki anahtar (…/?k=…) telefona kaydedilir; adres çubuğunda kalır ki "Ana Ekrana Ekle" ile eklenen uygulama da onu bilsin
+const urlAnahtar = new URLSearchParams(location.search).get('k');
+if (urlAnahtar) ls.yaz('imp_anahtar', urlAnahtar);
 const S = {
   anahtar: ls.al('imp_anahtar', ''), veri: ls.al('imp_veri', null), fiyat: ls.al('imp_fiyat', { piyasa: {}, hisseler: {} }),
   sekme: 'hesap', impSeg: 'analiz', sohbet: ls.al('imp_sohbet', []), mesgul: false,
@@ -27,7 +30,7 @@ const S = {
 async function api(yol, govde) {
   const r = await fetch('/api/' + yol, { method: govde === undefined ? 'GET' : 'POST', headers: { 'content-type': 'application/json', 'x-anahtar': S.anahtar }, body: govde === undefined ? undefined : JSON.stringify(govde) });
   const j = await r.json().catch(() => ({}));
-  if (r.status === 401 && j.giris) { S.anahtar = ''; ls.yaz('imp_anahtar', ''); girisEkrani(); throw new Error('Şifre gerekli'); }
+  if (r.status === 401 && j.giris) { S.anahtar = ''; ls.yaz('imp_anahtar', ''); anahtarsiz(); throw new Error('Bağlantı geçersiz'); }
   if (!r.ok) throw new Error(j.hata || 'Bağlantı sorunu');
   return j;
 }
@@ -73,27 +76,11 @@ const SVG = {
   gonder: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4z"/></svg>',
 };
 
-// ---------- Giriş (bir kez) ----------
-function girisEkrani() {
+// ---------- Anahtar: şifre yok; telefon bir kez özel bağlantıyla (…/?k=…) açılır ----------
+function anahtarsiz() {
   $('#ust').classList.add('hidden'); $('#sekmeler').classList.add('hidden'); $('.yazma')?.remove();
-  let pin = '';
-  app().innerHTML = `<div class="giris"><img class="avatar" src="img/aydin.png" alt=""><h1>İmparator</h1><p class="soluk">Şifreni gir</p>
-    <div class="pin" id="pin">${'<span></span>'.repeat(6)}</div><div class="soluk kucuk" id="pinMsj">&nbsp;</div>
-    <div class="tus">${[1, 2, 3, 4, 5, 6, 7, 8, 9, '', 0, '⌫'].map(t => t === '' ? '<span></span>' : `<button data-t="${t}">${t}</button>`).join('')}</div></div>`;
-  const ciz = () => $$('#pin span').forEach((s, i) => (s.textContent = i < pin.length ? '•' : ''));
-  $$('[data-t]').forEach(b => b.onclick = async () => {
-    const t = b.dataset.t;
-    if (t === '⌫') pin = pin.slice(0, -1); else if (pin.length < 6) pin += t;
-    ciz();
-    if (pin.length === 6) {
-      $('#pinMsj').textContent = 'Kontrol ediliyor…';
-      try {
-        const r = await fetch('/api/giris', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ pin }) }).then(r => r.json());
-        if (!r.anahtar) throw new Error(r.hata || 'Şifre yanlış');
-        S.anahtar = r.anahtar; ls.yaz('imp_anahtar', r.anahtar); baslat();
-      } catch (e) { $('#pinMsj').textContent = e.message; pin = ''; ciz(); }
-    }
-  });
+  app().innerHTML = `<div class="giris"><img class="avatar" src="img/aydin.png" alt=""><h1>İmparator</h1>
+    <p class="soluk">Bu uygulamayı açmak için Mervan’ın gönderdiği bağlantıya dokun.</p></div>`;
 }
 
 // ---------- Sekmeler ----------
@@ -528,20 +515,18 @@ function ayarlar() {
     <p class="soluk kucuk">Aracı kurumunun aldığı komisyon. Girersen her alış ve satışta otomatik hesaplanır; istersen kayıtta elle değiştirirsin.</p>
     <button class="btn" id="aKaydet">Kaydet</button>
     <button class="btn ikinci" id="aGuncelle" style="margin-top:10px">Uygulamayı güncelle</button>
-    <button class="btn hayalet" id="aCikis">Bu telefondan çıkış yap</button>
     <p class="soluk cok-kucuk" style="text-align:center">İmparator ${SURUM} · Defter Google Sheet’te tutulur</p>`);
   const boyut = localStorage.getItem('imp_boyut') || '';
   $$('#aBoyut button', w).forEach(b => { b.classList.toggle('on', b.dataset.b === boyut); b.onclick = () => { localStorage.setItem('imp_boyut', b.dataset.b); document.documentElement.dataset.boyut = b.dataset.b; $$('#aBoyut button', w).forEach(x => x.classList.toggle('on', x === b)); }; });
   $('#aKaydet', w).onclick = async () => { $('#aKaydet', w).disabled = true; try { veriKoy(await api('ayar', { hitap: $('#aHitap', w).value.trim() || 'Aydın Bey', komisyon_binde: $('#aKom', w).value })); w.kapat(); toast('Kaydedildi'); yenidenCiz(); } catch (e) { toast(e.message); $('#aKaydet', w).disabled = false; } };
   $('#aGuncelle', w).onclick = async () => { try { (await navigator.serviceWorker?.getRegistrations?.() || []).forEach(r => r.unregister()); (await caches.keys()).forEach(k => caches.delete(k)); } catch { /* yok */ } location.reload(); };
-  $('#aCikis', w).onclick = () => onay('Çıkış yapılsın mı?', 'Tekrar girmek için şifre gerekecek. Defterin silinmez.', () => { ['imp_anahtar', 'imp_veri', 'imp_fiyat', 'imp_sohbet'].forEach(k => localStorage.removeItem(k)); location.reload(); }, { evetYazi: 'Çıkış yap', tehlike: true });
 }
 
 // ---------- Açılış ----------
 async function baslat() {
   $$('#sekmeler button').forEach(b => b.onclick = () => sekmeGit(b.dataset.s));
   $('#ayarBtn').onclick = ayarlar;
-  if (!S.anahtar) return girisEkrani();
+  if (!S.anahtar) return anahtarsiz();
   if (S.veri) ciz(); else app().innerHTML = '<div class="giris"><img class="avatar" src="img/aydin.png" alt=""><p class="soluk">Defter açılıyor…</p></div>';
   try { await veriYukle(); ciz(); } catch (e) { if (S.anahtar) toast('Defter okunamadı: ' + e.message, 5000); if (!S.veri) return; }
   try { await fiyatYukle(); yenidenCiz(); } catch { /* fiyat yoksa da çalışır */ }

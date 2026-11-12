@@ -3,15 +3,14 @@
 Babam için sade hisse defteri: alış/satış kaydı, ortalama maliyetle kâr hesabı, piyasa ekranı ve **İmparator** (yapay zekâ) ile sohbet + hafta içi her sabah/akşam otomatik analiz.
 
 - **Veri:** Mervan'ın Google Sheet'inde (sekmeler: İşlemler, Analizler, Takip, Ayarlar — ilk açılışta kendiliğinden oluşur). Worker servis hesabıyla okur/yazar, hiçbir şey saklamaz.
-- **Giriş:** telefonda bir kez 6 haneli şifre (PIN).
+- **Giriş:** şifre yok. Telefon bir kez özel bağlantıyla açılır: `https://…/?k=GIZLI` (sonra Ana Ekrana Ekle; anahtar telefonda kalır).
 - **Fiyatlar:** Yahoo Finance (BIST ~15 dk gecikmeli).
 - **Yapay zekâ:** Gemini (anahtar sadece Cloudflare gizli ayarında). Analiz: hafta içi 08:45 ve 18:45 (İstanbul).
 
 ## Cloudflare gizli değişkenleri
 | Ad | Ne |
 |---|---|
-| `PIN` | 6 haneli şifre |
-| `GIZLI` | rastgele uzun metin (değişirse herkes yeniden şifre girer) |
+| `GIZLI` | rastgele uzun metin = bağlantıdaki erişim anahtarı (değiştirirsen eski bağlantı çalışmaz) |
 | `GOOGLE_SA_JSON` | servis hesabı anahtar dosyasının tamamı (Nébula'dakiyle aynı olabilir) |
 | `SHEET_ID` | Sheet adresi ya da kimliği (Sheet servis hesabıyla **Düzenleyen** olarak paylaşılmalı) |
 | `GEMINI_KEY` | Gemini API anahtarı |

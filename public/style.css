@@ -138,10 +138,6 @@ main { padding: 4px 16px calc(110px + var(--alt)); max-width: 640px; margin: 0 a
 .giris { min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 24px; text-align: center; gap: 8px; }
 .giris .avatar { width: 110px; height: 110px; }
 .giris h1 { margin: 10px 0 0; font-size: 2em; color: var(--marka); }
-.pin { display: flex; gap: 10px; margin: 18px 0 8px; }
-.pin span { width: 44px; height: 56px; border-radius: 14px; border: 2px solid var(--cizgi); background: var(--kart); display: grid; place-items: center; font-size: 1.6em; font-weight: 800; }
-.tus { display: grid; grid-template-columns: repeat(3, 84px); gap: 12px; margin-top: 10px; }
-.tus button { height: 72px; border-radius: 22px; background: var(--kart); font-size: 1.6em; font-weight: 700; box-shadow: var(--golge); }
 .toast { position: fixed; left: 50%; top: calc(64px + var(--ust)); transform: translateX(-50%); z-index: 70; background: var(--yazi); color: var(--bg); padding: 13px 18px; border-radius: 16px; font-weight: 600; font-size: .9em; max-width: 90vw; text-align: center; opacity: 0; pointer-events: none; transition: opacity .2s; }
 .toast.on { opacity: 1; }
 .cizgi-grafik { width: 100%; height: 90px; display: block; margin-top: 8px; }
