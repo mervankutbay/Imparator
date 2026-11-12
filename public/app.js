@@ -1,5 +1,5 @@
 // İmparator — babanın hisse defteri. Sade, büyük yazılı; veriler Mervan'ın Google Sheet'inde (sunucu üzerinden).
-import { hesapla, sayi, kodTemiz, sirala, BIST, bistAd, TURLER, tavanTaban } from './hesap.js';
+import { hesapla, sayi, kodTemiz, sirala, BIST, bistAd, TURLER, tavanTaban, fiyatAdimi } from './hesap.js';
 
 const SURUM = 'v7';
 const $ = (s, el = document) => el.querySelector(s);
@@ -401,8 +401,8 @@ function hesaplaSayfasi() {
       <label class="etiket">Zarar durdurma</label><div class="cipler">${[3, 5, 7, 10, 15].map(y => `<button class="cip" data-zarar="${y}">−%${y}</button>`).join('')}</div>
       ${alan('hZarar', 'Zarar yüzdesi', 'ör. 5', '%')}`,
     ort: `${cipler}${alan('oAdet', 'Elindeki adet', '0', 'adet')}${alan('oOrt', 'Şu anki ortalama maliyet')}
-      <div class="baslik" style="margin-left:2px">Yeni alım</div>${alan('oYAdet', 'Alınacak adet', '0', 'adet')}${alan('oYFiyat', 'Alış fiyatı')}
-      <div class="baslik" style="margin-left:2px">Ya da: ortalamayı kaça düşürmek istiyorsun?</div>${alan('oHedef', 'Hedef ortalama')}`,
+      <div class="baslik" style="margin-left:2px">Ortalamayı kaça düşürmek istiyorsun?</div>${alan('oHedef', 'Hedef ortalama', 'ör. 72')}
+      <div class="baslik" style="margin-left:2px">Yeni alım <span class="soluk kucuk">(isteğe bağlı)</span></div>${alan('oYAdet', 'Alınacak adet', '0', 'adet')}${alan('oYFiyat', 'Alış fiyatı')}`,
     tavan: `${cipler}${alan('tBaz', 'Önceki kapanış (baz fiyat)')}
       <label class="etiket">Günlük fiyat marjı</label><div class="seg" id="tMarj">${[10, 20].map(m => `<button data-m="${m}" class="${(HS.tMarj || 10) === m ? 'on' : ''}">%${m}</button>`).join('')}</div>`,
   };
@@ -440,11 +440,29 @@ function hesaplaSayfasi() {
         ana = `<span class="soluk kucuk">Yeni ortalama maliyet</span><b>${fmt(yeni)} ₺</b><span class="hap ${renk(O - yeni)}">${yeni <= O ? '▼' : '▲'} ${fmt(Math.abs(yeni - O))} ₺</span>`;
         x += satir('Toplam adet', adetFmt(t)) + satir('Toplam maliyet', tl(A * O + yA * yF)) + satir('Yeni alım tutarı', tl(yA * yF));
       }
-      if (A && O && H && yF) {
-        if ((yF < H && H < O) || (yF > H && H > O)) { const n = Math.ceil(A * (O - H) / (H - yF)); x += `<div class="ozet-kutu">${fmt(yF)} ₺’den <b>${adetFmt(n)} adet</b> (${tl(n * yF)}) alırsan ortalaman ${fmt(H)} ₺ olur.</div>`; if (!ana) ana = `<span class="soluk kucuk">${fmt(H)} ₺ ortalama için</span><b>${adetFmt(n)} adet al</b>`; }
-        else x += `<div class="ozet-kutu soluk">Hedef ortalama, şu anki ortalama ile alış fiyatı arasında olmalı.</div>`;
+      if (A && O && H) {
+        // Hedef ortalamaya inmek için: her fiyattan kaç adet gerekir (yeni alım girmeden de çalışır)
+        const yukari = H > O, adim = fiyatAdimi(H);
+        if (H === O) x += `<div class="ozet-kutu soluk">Hedef ortalama, şu anki ortalamanla aynı.</div>`;
+        else {
+          const kac = f => Math.ceil(A * (O - H) / (H - f));
+          const gecerli = f => f > 0 && (yukari ? f > H : f < H);
+          const son = HS.secili ? fiyatlar()[HS.secili]?.fiyat : null;
+          // Okunaklı yuvarlak fiyatlar: 72 hedef için 71, 70, 69, 68, 66, 64, 61, 56 gibi
+          const g = [0.01, 0.02, 0.05, 0.1, 0.2, 0.25, 0.5, 1, 2, 2.5, 5, 10, 20, 25, 50, 100].find(x => x >= Math.max(H * 0.012, adim)) || 100;
+          const taban = yukari ? Math.floor(H / g + 1 + 1e-9) * g : Math.ceil(H / g - 1 - 1e-9) * g;
+          let fl = [0, 1, 2, 3, 5, 7, 10, 15].map(k => yukari ? taban + k * g : taban - k * g);
+          if (yF) fl.push(yF); if (son) fl.push(son);
+          fl = [...new Set(fl.map(f => Math.round(f * 100) / 100))].filter(gecerli).sort((x1, x2) => yukari ? x1 - x2 : x2 - x1);
+          const ilk = (yF && gecerli(yF)) ? yF : (son && gecerli(son)) ? son : null;
+          if (ilk) { const n = kac(ilk); x += `<div class="ozet-kutu">${fmt(ilk)} ₺’den <b>${adetFmt(n)} adet</b> (${tl(n * ilk)}) alırsan ortalaman ${fmt(H)} ₺ olur.</div>`; if (!ana) ana = `<span class="soluk kucuk">${fmt(H)} ₺ ortalama için ${fmt(ilk)} ₺’den</span><b>${adetFmt(n)} adet al</b><span class="soluk kucuk">${tl(n * ilk)} gerekir</span>`; }
+          else if ((yF && !gecerli(yF)) || (son && !gecerli(son) && !yF)) x += `<div class="ozet-kutu soluk">${fmt(yF || son)} ₺’den alarak ortalama ${fmt(H)} ₺ olmaz; alış fiyatı hedef ortalamanın ${yukari ? 'üstünde' : 'altında'} olmalı.</div>`;
+          if (fl.length) {
+            x += `<div class="etiket">${fmt(H)} ₺ ortalama için hangi fiyattan kaç adet</div><table class="tablo"><tr><th>Alış fiyatı</th><th>Adet</th><th>Tutar</th></tr>${fl.map(f => { const n = kac(f); return `<tr${f === ilk ? ' style="font-weight:800"' : ''}><td>${fmt(f)} ₺${f === son ? ' <span class="cok-kucuk">(şimdi)</span>' : ''}</td><td>${adetFmt(n)}</td><td>${tl(n * f)}</td></tr>`; }).join('')}</table>`;
+            if (!ana) ana = `<span class="soluk kucuk">${fmt(H)} ₺ ortalama için</span><b>${adetFmt(kac(fl[0]))} – ${adetFmt(kac(fl[fl.length - 1]))} adet</b><span class="soluk kucuk">alış fiyatına göre, tablo aşağıda</span>`;
+          }
+        }
       }
-
     } else {
       const b = v('tBaz'), m = HS.tMarj || 10;
       if (b) {
@@ -457,7 +475,7 @@ function hesaplaSayfasi() {
       }
     }
     o.innerHTML = x;
-    const an = $('#anaSonuc'); an.innerHTML = ana || `<span class="soluk">${{ kar: 'Alış, satış fiyatı ve adedi yaz', hedef: 'Alış fiyatını yaz, bir yüzde seç', ort: 'Elindeki adet ve ortalamayı, sonra yeni alımı yaz', tavan: 'Önceki kapanış fiyatını yaz' }[HS.arac]}</span>`; an.classList.toggle('bos', !ana);
+    const an = $('#anaSonuc'); an.innerHTML = ana || `<span class="soluk">${{ kar: 'Alış, satış fiyatı ve adedi yaz', hedef: 'Alış fiyatını yaz, bir yüzde seç', ort: 'Elindeki adet ve ortalamayı, sonra hedef ortalamayı ya da yeni alımı yaz', tavan: 'Önceki kapanış fiyatını yaz' }[HS.arac]}</span>`; an.classList.toggle('bos', !ana);
   };
   $$('#app input:not(#hAra)').forEach(i => (i.oninput = hesapYap));
   if ($('#kKom')) $('#kKom').onchange = hesapYap;
