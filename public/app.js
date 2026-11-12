@@ -402,7 +402,7 @@ function hesaplaSayfasi() {
       ${alan('hZarar', 'Zarar yüzdesi', 'ör. 5', '%')}`,
     ort: `${cipler}${alan('oAdet', 'Elindeki adet', '0', 'adet')}${alan('oOrt', 'Şu anki ortalama maliyet')}
       <div class="baslik" style="margin-left:2px">Ortalamayı kaça düşürmek istiyorsun?</div>${alan('oHedef', 'Hedef ortalama', 'ör. 72')}
-      <div class="baslik" style="margin-left:2px">Yeni alım <span class="soluk kucuk">(isteğe bağlı)</span></div>${alan('oYAdet', 'Alınacak adet', '0', 'adet')}${alan('oYFiyat', 'Alış fiyatı')}`,
+      <div class="baslik" style="margin-left:2px">Yeni alım <span class="soluk kucuk">(isteğe bağlı)</span></div>${alan('oYTutar', 'Kaç liralık alacaksın?', 'ör. 10.000')}${alan('oYAdet', 'ya da kaç adet alacaksın?', '0', 'adet')}${alan('oYFiyat', 'Alış fiyatı', HS.secili && fiyatlar()[HS.secili]?.fiyat ? 'boşsa ' + fmt(fiyatlar()[HS.secili].fiyat) + ' (şimdi)' : '0')}`,
     tavan: `${cipler}${alan('tBaz', 'Önceki kapanış (baz fiyat)')}
       <label class="etiket">Günlük fiyat marjı</label><div class="seg" id="tMarj">${[10, 20].map(m => `<button data-m="${m}" class="${(HS.tMarj || 10) === m ? 'on' : ''}">%${m}</button>`).join('')}</div>`,
   };
@@ -434,11 +434,19 @@ function hesaplaSayfasi() {
         if (z) x += satir('Zarar durdurmada fark', '−' + fmt(a - f2) + ' ₺');
       }
     } else if (HS.arac === 'ort') {
-      const A = v('oAdet'), O = v('oOrt'), yA = v('oYAdet'), yF = v('oYFiyat'), H = v('oHedef');
-      if (A && O && yA && yF) {
-        const t = A + yA, yeni = (A * O + yA * yF) / t;
-        ana = `<span class="soluk kucuk">Yeni ortalama maliyet</span><b>${fmt(yeni)} ₺</b><span class="hap ${renk(O - yeni)}">${yeni <= O ? '▼' : '▲'} ${fmt(Math.abs(yeni - O))} ₺</span>`;
-        x += satir('Toplam adet', adetFmt(t)) + satir('Toplam maliyet', tl(A * O + yA * yF)) + satir('Yeni alım tutarı', tl(yA * yF));
+      const A = v('oAdet'), O = v('oOrt'), yT = v('oYTutar'), H = v('oHedef');
+      const sonF = HS.secili ? fiyatlar()[HS.secili]?.fiyat : null;
+      // Alış fiyatı boşsa seçili hissenin güncel fiyatı; adet boşsa tutardan hesaplanır (10.000 ₺'lik alırsam?)
+      const yF = v('oYFiyat'), alisF = yF || sonF || 0, tutardan = !v('oYAdet') && yT && alisF;
+      const yA = v('oYAdet') || (tutardan ? Math.floor(yT / alisF) : 0);
+      if (tutardan && !yA) x += `<div class="ozet-kutu soluk">${tl(yT)} ile ${fmt(alisF)} ₺’den 1 adet bile alınmıyor.</div>`;
+      if (!alisF && (yT || v('oYAdet'))) x += `<div class="ozet-kutu soluk">Alış fiyatını yaz (ya da yukarıdan hisse seç, güncel fiyatı kullanayım).</div>`;
+      if (A && O && yA && alisF) {
+        const t = A + yA, yeni = (A * O + yA * alisF) / t;
+        ana = `<span class="soluk kucuk">${tutardan ? tl(yT) + '’lik alırsan y' : 'Y'}eni ortalama maliyet</span><b>${fmt(yeni)} ₺</b><span class="hap ${renk(O - yeni)}">${yeni <= O ? '▼' : '▲'} ${fmt(Math.abs(yeni - O))} ₺</span>`;
+        x += (tutardan ? satir('Alınan adet', `${adetFmt(yA)} adet × ${fmt(alisF)} ₺`) + (yT - yA * alisF > 0.005 ? satir('Artan para', tl(yT - yA * alisF)) : '') : '')
+          + (!yF ? satir('Alış fiyatı', `${fmt(alisF)} ₺ (şimdiki)`) : '')
+          + satir('Toplam adet', adetFmt(t)) + satir('Toplam maliyet', tl(A * O + yA * alisF)) + satir('Yeni alım tutarı', tl(yA * alisF));
       }
       if (A && O && H) {
         // Hedef ortalamaya inmek için: her fiyattan kaç adet gerekir (yeni alım girmeden de çalışır)
