@@ -13,7 +13,7 @@ import { fiyatlar, ara, PIYASA } from './piyasa.js';
 import { gemini, kisilik, veriOzeti, ISLEM_KURALI, analizIstemi, analizAyir, bugunTR } from './imparator.js';
 import { hesapla, kodTemiz, sayi, TURLER } from '../public/hesap.js';
 
-const SURUM = 'v3';
+const SURUM = 'v4';
 const json = (o, status = 200) => new Response(JSON.stringify(o), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } });
 const esit = (a, b) => { if (!a || !b || a.length !== b.length) return false; let d = 0; for (let i = 0; i < a.length; i++) d |= a.charCodeAt(i) ^ b.charCodeAt(i); return d === 0; };
 const yetkili = (k, env) => esit(String(k || ''), String(env.GIZLI || ''));
@@ -36,7 +36,7 @@ async function veri(env) {
     islemler: (t['İşlemler'] || []).filter(r => r.Kimlik && r.Hisse).map(islemDis),
     analizler: (t['Analizler'] || []).filter(r => r['Metin']).map(r => ({ Tarih: isoTarih(r.Tarih), Saat: String(r.Saat || ''), Tur: r['Tür'], Baslik: r['Başlık'], Metin: r['Metin'] })).sort((a, b) => (b.Tarih + b.Saat).localeCompare(a.Tarih + a.Saat)).slice(0, 30),
     takip: (t['Takip'] || []).map(r => kodTemiz(r.Kod)).filter(Boolean),
-    ayar: { hitap: ayar.hitap || 'Aydın Bey', komisyon_binde: ayar.komisyon_binde ?? '' },
+    ayar: { sozler: String(ayar.sozler || ''), komisyon_binde: ayar.komisyon_binde ?? '' },
   };
 }
 
@@ -93,7 +93,7 @@ export default {
       }
       if (p === '/api/ayar' && request.method === 'POST') {
         const b = await request.json(), y = {};
-        if (b.hitap !== undefined) y.hitap = String(b.hitap).slice(0, 40);
+        if (b.sozler !== undefined) y.sozler = String(b.sozler).slice(0, 3000);
         if (b.komisyon_binde !== undefined) y.komisyon_binde = String(sayi(b.komisyon_binde));
         await SH.ayarYaz(env, y); return json(await veri(env));
       }

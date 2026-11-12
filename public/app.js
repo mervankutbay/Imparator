@@ -1,7 +1,7 @@
 // İmparator — babanın hisse defteri. Sade, büyük yazılı; veriler Mervan'ın Google Sheet'inde (sunucu üzerinden).
 import { hesapla, sayi, kodTemiz, sirala, BIST, bistAd, TURLER, tavanTaban } from './hesap.js';
 
-const SURUM = 'v3';
+const SURUM = 'v4';
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -576,7 +576,7 @@ function mesajHTML(m, i) {
 let ek = null;
 function sohbetBolumu() {
   const ONERI = ['Bugün piyasa nasıl?', 'Portföyümü değerlendir', 'Dolar ve altın ne durumda?', 'Bu hafta neye dikkat edeyim?'];
-  $('#impIc').innerHTML = `<div class="msjlar" id="msjlar">${S.sohbet.map(mesajHTML).join('') || `<div class="msj o">Buyur ${esc(S.veri?.ayar?.hitap || 'Aydın Bey')}. Piyasayı da defteri de önümde tutuyorum. Ne soracaksan sor; aldığını sattığını da söyle, deftere yazayım.</div>`}</div><div style="height:${S.sohbet.length ? 150 : 190}px"></div>`;
+  $('#impIc').innerHTML = `<div class="msjlar" id="msjlar">${S.sohbet.map(mesajHTML).join('') || `<div class="msj o">Piyasa da defter de önümüzde. Ne düşünüyoruz, bir bakalım? Aldığımızı sattığımızı da söyle, deftere yazalım.</div>`}</div><div style="height:${S.sohbet.length ? 150 : 190}px"></div>`;
   if (!$('.yazma')) {
     const y = document.createElement('div'); y.className = 'yazma';
     y.innerHTML = `<div class="oneriler" id="oneriler">${S.sohbet.length ? '' : ONERI.map(o => `<button class="cip" data-o="${esc(o)}">${esc(o)}</button>`).join('')}</div><div id="ekOn"></div>
@@ -667,7 +667,8 @@ function ayarlar() {
     <label class="etiket">Görünüm</label><div class="seg" id="aTema"><button data-t="">Otomatik</button><button data-t="acik">Açık</button><button data-t="koyu">Gece</button></div>
     <p class="soluk kucuk">Otomatik: telefon gece moduna geçince uygulama da koyu olur.</p>
     <label class="etiket">Yazı boyutu</label><div class="seg" id="aBoyut"><button data-b="">Büyük</button><button data-b="cok">Çok büyük</button></div>
-    <label class="etiket" for="aHitap">İmparator sana nasıl hitap etsin?</label><input id="aHitap" maxlength="40" value="${esc(a.hitap || 'Aydın Bey')}">
+    <label class="etiket" for="aSoz">İmparator’un sözleri</label><textarea id="aSoz" rows="5" maxlength="3000" placeholder="Her satıra bir söz. Kürtçe ise yanına Türkçesi: Dilop dilop dibe gol (Damla damla göl olur)">${esc(a.sozler || '')}</textarea>
+    <p class="soluk kucuk">Babanın gerçekten kullandığı deyim ve atasözleri. İmparator önce bunları kullanır.</p>
     <label class="etiket" for="aKom">Komisyon oranı (binde)</label><input id="aKom" inputmode="decimal" placeholder="ör. 2 (binde 2)" value="${esc(String(a.komisyon_binde || '').replace('.', ','))}">
     <p class="soluk kucuk">Aracı kurumunun aldığı komisyon. Girersen her alış ve satışta otomatik hesaplanır; istersen kayıtta elle değiştirirsin.</p>
     <button class="btn" id="aKaydet">Kaydet</button>
@@ -677,7 +678,7 @@ function ayarlar() {
   $$('#aTema button', w).forEach(b => { b.classList.toggle('on', b.dataset.t === tm); b.onclick = () => { temaUygula(b.dataset.t); $$('#aTema button', w).forEach(x => x.classList.toggle('on', x === b)); }; });
   const boyut = localStorage.getItem('imp_boyut') || '';
   $$('#aBoyut button', w).forEach(b => { b.classList.toggle('on', b.dataset.b === boyut); b.onclick = () => { localStorage.setItem('imp_boyut', b.dataset.b); document.documentElement.dataset.boyut = b.dataset.b; $$('#aBoyut button', w).forEach(x => x.classList.toggle('on', x === b)); }; });
-  $('#aKaydet', w).onclick = async () => { $('#aKaydet', w).disabled = true; try { veriKoy(await api('ayar', { hitap: $('#aHitap', w).value.trim() || 'Aydın Bey', komisyon_binde: $('#aKom', w).value })); w.kapat(); toast('Kaydedildi'); yenidenCiz(); } catch (e) { toast(e.message); $('#aKaydet', w).disabled = false; } };
+  $('#aKaydet', w).onclick = async () => { $('#aKaydet', w).disabled = true; try { veriKoy(await api('ayar', { sozler: $('#aSoz', w).value.trim(), komisyon_binde: $('#aKom', w).value })); w.kapat(); toast('Kaydedildi'); yenidenCiz(); } catch (e) { toast(e.message); $('#aKaydet', w).disabled = false; } };
   $('#aGuncelle', w).onclick = async () => { try { (await navigator.serviceWorker?.getRegistrations?.() || []).forEach(r => r.unregister()); (await caches.keys()).forEach(k => caches.delete(k)); } catch { /* yok */ } location.reload(); };
 }
 
