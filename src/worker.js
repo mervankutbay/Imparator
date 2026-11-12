@@ -13,7 +13,7 @@ import { fiyatlar, ara, PIYASA } from './piyasa.js';
 import { gemini, kisilik, veriOzeti, ISLEM_KURALI, analizIstemi, analizAyir, bugunTR } from './imparator.js';
 import { hesapla, kodTemiz, sayi, TURLER } from '../public/hesap.js';
 
-const SURUM = 'v4';
+const SURUM = 'v5';
 const json = (o, status = 200) => new Response(JSON.stringify(o), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } });
 const esit = (a, b) => { if (!a || !b || a.length !== b.length) return false; let d = 0; for (let i = 0; i < a.length; i++) d |= a.charCodeAt(i) ^ b.charCodeAt(i); return d === 0; };
 const yetkili = (k, env) => esit(String(k || ''), String(env.GIZLI || ''));
@@ -44,7 +44,7 @@ async function analizYap(env, tur) {
   const v = await veri(env);
   const h = hesapla(v.islemler);
   const kodlar = [...new Set([...h.acik.map(p => p.kod), ...v.takip])];
-  const fiyat = await fiyatlar(kodlar).catch(() => ({ piyasa: {}, hisseler: {} }));
+  const fiyat = await fiyatlar(kodlar, { enFazla: 20 }).catch(() => ({ piyasa: {}, hisseler: {} }));
   const ozet = veriOzeti({ islemler: v.islemler, ayar: v.ayar, takip: v.takip, fiyat, sonAnaliz: v.analizler[0] });
   const r = await gemini(env, { system: kisilik(v.ayar), contents: [{ role: 'user', parts: [{ text: analizIstemi(tur, ozet) }] }], arama: true, sure: 90000, uzun: true });
   const { baslik, metin } = analizAyir(r.text);
@@ -108,7 +108,7 @@ export default {
       if (p === '/api/sohbet' && request.method === 'POST') {
         const b = await request.json();
         const v = await veri(env), h = hesapla(v.islemler);
-        const fiyat = await fiyatlar([...new Set([...h.acik.map(x => x.kod), ...v.takip])]).catch(() => ({ piyasa: {}, hisseler: {} }));
+        const fiyat = await fiyatlar([...new Set([...h.acik.map(x => x.kod), ...v.takip])], { enFazla: 20 }).catch(() => ({ piyasa: {}, hisseler: {} }));
         const system = `${kisilik(v.ayar)}\n\n${ISLEM_KURALI}\n\nVERİLER:\n${veriOzeti({ ...v, fiyat, sonAnaliz: v.analizler[0] })}${v.analizler[0] ? `\n\nSON ANALİZİN METNİ:\n${v.analizler[0].Metin.slice(0, 2500)}` : ''}`;
         const contents = (b.mesajlar || []).slice(-30).map(m => ({ role: m.role === 'user' ? 'user' : 'model', parts: [{ text: String(m.text || '').slice(0, 4000) }] }));
         if (!contents.length) throw new Error('Mesaj yok');
