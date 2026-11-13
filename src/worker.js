@@ -13,7 +13,7 @@ import { fiyatlar, ara, PIYASA } from './piyasa.js';
 import { gemini, geminiAkis, kisilik, veriOzeti, ISLEM_KURALI, analizIstemi, analizAyir, bugunTR } from './imparator.js';
 import { hesapla, kodTemiz, sayi, TURLER } from '../public/hesap.js';
 
-const SURUM = 'v9';
+const SURUM = 'v10';
 const json = (o, status = 200) => new Response(JSON.stringify(o), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } });
 const esit = (a, b) => { if (!a || !b || a.length !== b.length) return false; let d = 0; for (let i = 0; i < a.length; i++) d |= a.charCodeAt(i) ^ b.charCodeAt(i); return d === 0; };
 const yetkili = (k, env) => esit(String(k || ''), String(env.GIZLI || ''));
@@ -57,7 +57,7 @@ async function analizKaydet(env, tur, r) {
 }
 async function analizYap(env, tur) {
   const ist = await analizHazirla(env, tur);
-  return analizKaydet(env, tur, await gemini(env, { ...ist, arama: true, sure: 90000, toplam: 240000, uzun: true }));
+  return analizKaydet(env, tur, await gemini(env, { ...ist, arama: true, sure: 60000, toplam: 150000, uzun: true }));
 }
 // Akışlı cevap (satır satır JSON): {t:"parça"} … sonda {son:true, ...}. İlk parça gelene kadar hata olursa normal JSON hata döner.
 async function akisla(ctx, basla) {

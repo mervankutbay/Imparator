@@ -1,7 +1,7 @@
 // İmparator — babanın hisse defteri. Sade, büyük yazılı; veriler Mervan'ın Google Sheet'inde (sunucu üzerinden).
 import { hesapla, sayi, kodTemiz, sirala, BIST, bistAd, TURLER, tavanTaban, fiyatAdimi } from './hesap.js';
 
-const SURUM = 'v9';
+const SURUM = 'v10';
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -39,7 +39,7 @@ async function api(yol, govde) {
 // Akışlı istek: İmparator yazdıkça parça parça gelir (parca(birikenMetin) çağrılır), sonunda son nesne döner
 async function akis(yol, govde, parca) {
   let r;
-  try { r = await fetch('/api/' + yol, { method: 'POST', headers: { 'content-type': 'application/json', 'x-anahtar': S.anahtar }, body: JSON.stringify({ ...govde, akis: true }) }); }
+  try { r = await fetch('/api/' + yol, { method: 'POST', headers: { 'content-type': 'application/json', 'x-anahtar': S.anahtar }, body: JSON.stringify(govde) }); }
   catch { const e = new Error('İnternet bağlantısı yok'); e.ag = true; throw e; }
   if (!/ndjson/.test(r.headers.get('content-type') || '') || !r.body) {
     const j = await r.json().catch(() => ({}));

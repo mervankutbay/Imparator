@@ -1,33 +1,14 @@
 // İmparator — yapay zekâ: kişilik, sohbet, günlük analiz. Gemini anahtarı sadece Worker'ın gizli ayarında (GEMINI_KEY).
 import { hesapla, sayi } from '../public/hesap.js';
 
-// Model listesi sabit değil: Google eski modelleri kapattıkça (ör. 2.5-flash) uygulama bozulmasın diye
-// anahtarın erişebildiği modeller Google'dan okunur ve en yeni "flash" önce denenir (6 saatte bir yenilenir).
-const YEDEK_ANA = ['gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-flash-latest'];
-const YEDEK_HAFIF = ['gemini-3.8-flash-lite', 'gemini-3.5-flash-lite', 'gemini-flash-lite-latest'];
-let modelListe = null, modelZaman = 0;
-const kapali = new Set(); // "artık kullanılamıyor" diyen modeller bir daha denenmez
-async function modeller(key) {
-  if (modelListe && Date.now() - modelZaman < 6 * 3600e3) return modelListe;
-  try {
-    const ctrl = new AbortController(), t = setTimeout(() => ctrl.abort(), 5000);
-    const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=200', { headers: { 'x-goog-api-key': key }, signal: ctrl.signal });
-    clearTimeout(t);
-    const j = await r.json();
-    const ad = (j.models || []).filter(m => (m.supportedGenerationMethods || []).includes('generateContent')).map(m => m.name.replace('models/', ''));
-    if (ad.length) { modelListe = ad; modelZaman = Date.now(); }
-  } catch { /* liste alınamazsa yedek sıra */ }
-  return modelListe || [];
-}
-async function sira(key, hafif) {
-  const ad = await modeller(key);
-  const yeni = re => ad.filter(n => re.test(n)).sort((a, b) => surum(b) - surum(a));
-  const flash = yeni(/^gemini-\d+(\.\d+)?-flash$/), lite = yeni(/^gemini-\d+(\.\d+)?-flash-lite$/);
-  const ana = [...flash.slice(0, 3), ...(ad.length ? YEDEK_ANA.filter(m => ad.includes(m)) : YEDEK_ANA)];
-  const l = hafif ? [...lite.slice(0, 2), ...(ad.length ? YEDEK_HAFIF.filter(m => ad.includes(m)) : YEDEK_HAFIF), ...ana] : ana;
-  const s = [...new Set(l)].filter(m => !kapali.has(m));
-  return s.length ? s : YEDEK_ANA;
-}
+// Nébula'daki gibi (ölçümle seçildi): 3.8-flash takılıyor; 3.6/3.5 flash 2-4 sn.
+// Günün ilk 20 sohbet mesajı 3.6-flash, sonrası lite (kota bitmesin). Çalışan model ve düşünme ayarı hatırlanır,
+// takılan model sıranın sonuna atılır.
+const ANA = ['gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-3.5-flash-lite', 'gemini-2.5-flash'];
+const HAFIF = ['gemini-3.5-flash-lite', 'gemini-3.6-flash', 'gemini-3.5-flash'];
+const kotu = new Set(), dusunmeAdim = {};
+let calisan = null;
+const sira = hafif => { const t = hafif ? HAFIF : [...new Set([calisan, ...ANA].filter(Boolean))]; return [...t.filter(m => !kotu.has(m)), ...t.filter(m => kotu.has(m))]; };
 const surum = m => parseFloat((m.match(/gemini-(\d+(?:\.\d+)?)/) || [])[1] || '0');
 // Hız için en az düşünme: 'minimal' önce (model reddederse sıradakine geçilir)
 const dusunme = m => surum(m) >= 3 ? [{ thinkingLevel: 'minimal' }, { thinkingLevel: 'low' }, null] : [{ thinkingBudget: 0 }, null];
@@ -38,9 +19,9 @@ async function dene(env, { system, contents, arama, hafif, uzun, sure, toplam, a
   const key = String(env.GEMINI_KEY || '').trim(); if (!key) throw new Error('GEMINI_KEY tanımlı değil');
   const bitis = Date.now() + toplam;
   let son = null, ilkHata = null, aramaAcik = arama;
-  for (const m of await sira(key, hafif)) {
+  for (const m of sira(hafif)) {
     const adimlar = dusunme(m);
-    for (let i = 0; i < adimlar.length; i++) {
+    for (let i = dusunmeAdim[m] || 0; i < adimlar.length; i++) {
       const kalan = bitis - Date.now(); if (kalan < 4000) break;
       const body = { contents, generationConfig: { temperature: 0.7, maxOutputTokens: uzun ? 5000 : 2000 } };
       if (system) body.systemInstruction = { parts: [{ text: system }] };
@@ -51,19 +32,21 @@ async function dene(env, { system, contents, arama, hafif, uzun, sure, toplam, a
         const yol = akis ? 'streamGenerateContent?alt=sse' : 'generateContent';
         const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${m}:${yol}`, { method: 'POST', headers: { 'x-goog-api-key': key, 'content-type': 'application/json' }, body: JSON.stringify(body), signal: ctrl.signal });
         if (!r.ok) { clearTimeout(t); const j = await r.json().catch(() => ({})); const e = new Error(j.error?.message || `Gemini ${r.status}`); e.status = r.status; throw e; }
-        if (akis) { clearTimeout(t); return { model: m, govde: r.body }; }
+        if (akis) { clearTimeout(t); calisan = m; dusunmeAdim[m] = i; return { model: m, govde: r.body }; }
         const j = await r.json().catch(() => ({})); clearTimeout(t);
         const text = (j.candidates?.[0]?.content?.parts || []).filter(p => !p.thought).map(p => p.text || '').join('').trim();
-        if (!text) { son = new Error('Boş cevap geldi'); break; }
+        if (!text) { son = new Error('Boş cevap geldi'); kotu.add(m); break; }
+        if (!hafif) calisan = m; dusunmeAdim[m] = i; kotu.delete(m);
         return { text, model: m, kaynaklar: kaynakAl(j) };
       } catch (e) {
         clearTimeout(t); son = e; const msg = String(e.message || '');
-        if (!/thinking/i.test(msg) && /no longer available|not found|deprecated|is not supported for generateContent/i.test(msg)) { kapali.add(m); modelZaman = 0; break; }
+        if (!/thinking/i.test(msg) && /no longer available|not found|deprecated|is not supported for generateContent/i.test(msg)) { kotu.add(m); break; }
         if (!ilkHata && e.name !== 'AbortError') ilkHata = e;
-        if (e.name === 'AbortError') { son = new Error('İmparator zamanında cevap veremedi, bir daha dene.'); aramaAcik = false; break; }
+        if (e.name === 'AbortError') { son = new Error('İmparator zamanında cevap veremedi, bir daha dene.'); kotu.add(m); break; }
         if (/thinking/i.test(msg)) continue;
         if (aramaAcik && (e.status === 429 || /search|grounding|tool/i.test(msg))) { aramaAcik = false; i--; continue; }
         if (e.status === 401 || e.status === 403) { console.error('gemini', e.status, msg); throw new Error('Yapay zekâ anahtarında sorun var (Mervan’a haber ver).'); }
+        if (e.status >= 500 || e.status === 429) kotu.add(m);
         if (e.status === 400 && !/model|not found|available|support/i.test(msg)) { console.error('gemini', 400, msg); throw new Error(/image|inline|size|payload/i.test(msg) ? 'Fotoğraf okunamadı; daha net ya da daha küçük bir fotoğraf dene.' : 'İmparator bu isteği yapamadı, farklı sorup tekrar dene.'); }
         break;
       }
