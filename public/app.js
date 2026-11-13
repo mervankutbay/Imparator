@@ -1,7 +1,7 @@
 // İmparator — babanın hisse defteri. Sade, büyük yazılı; veriler Mervan'ın Google Sheet'inde (sunucu üzerinden).
 import { hesapla, sayi, kodTemiz, sirala, BIST, bistAd, TURLER, tavanTaban, fiyatAdimi } from './hesap.js';
 
-const SURUM = 'v8';
+const SURUM = 'v9';
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
