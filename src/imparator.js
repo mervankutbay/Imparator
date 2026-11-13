@@ -4,32 +4,36 @@ import { hesapla, sayi } from '../public/hesap.js';
 const ANA = ['gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-2.5-flash'];
 const HAFIF = ['gemini-3.5-flash-lite', 'gemini-2.5-flash-lite', ...ANA];
 const surum = m => parseFloat((m.match(/gemini-(\d+(?:\.\d+)?)/) || [])[1] || '0');
-const dusunme = m => surum(m) >= 3 ? [{ thinkingLevel: 'low' }, { thinkingLevel: 'minimal' }, null] : [{ thinkingBudget: 0 }, null];
+// Hız için en az düşünme: 'minimal' önce (model reddederse sıradakine geçilir)
+const dusunme = m => surum(m) >= 3 ? [{ thinkingLevel: 'minimal' }, { thinkingLevel: 'low' }, null] : [{ thinkingBudget: 0 }, null];
 
-export async function gemini(env, { system, contents, arama = true, hafif = false, sure = 45000, uzun = false }) {
+// Bir modele istek dener; model/düşünme/arama uymazsa sıradakine geçer. Toplam süre sınırı aşılmaz:
+// zaman aşımında bir sonraki model ARAMASIZ denenir (Google araması en yavaş kısım).
+async function dene(env, { system, contents, arama, hafif, uzun, sure, toplam, akis }) {
   const key = String(env.GEMINI_KEY || '').trim(); if (!key) throw new Error('GEMINI_KEY tanımlı değil');
+  const bitis = Date.now() + toplam;
   let son = null, aramaAcik = arama;
   for (const m of hafif ? HAFIF : ANA) {
     const adimlar = dusunme(m);
     for (let i = 0; i < adimlar.length; i++) {
-      const body = { contents, generationConfig: { temperature: 0.7, maxOutputTokens: uzun ? 6000 : 2500 } };
+      const kalan = bitis - Date.now(); if (kalan < 4000) break;
+      const body = { contents, generationConfig: { temperature: 0.7, maxOutputTokens: uzun ? 5000 : 2000 } };
       if (system) body.systemInstruction = { parts: [{ text: system }] };
       if (adimlar[i]) body.generationConfig.thinkingConfig = adimlar[i];
       if (aramaAcik) body.tools = [{ google_search: {} }];
-      const ctrl = new AbortController(), t = setTimeout(() => ctrl.abort(), sure);
+      const ctrl = new AbortController(), t = setTimeout(() => ctrl.abort(), Math.min(sure, kalan));
       try {
-        const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent`, { method: 'POST', headers: { 'x-goog-api-key': key, 'content-type': 'application/json' }, body: JSON.stringify(body), signal: ctrl.signal });
-        clearTimeout(t);
-        const j = await r.json().catch(() => ({}));
-        if (!r.ok) { const e = new Error(j.error?.message || `Gemini ${r.status}`); e.status = r.status; throw e; }
+        const yol = akis ? 'streamGenerateContent?alt=sse' : 'generateContent';
+        const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${m}:${yol}`, { method: 'POST', headers: { 'x-goog-api-key': key, 'content-type': 'application/json' }, body: JSON.stringify(body), signal: ctrl.signal });
+        if (!r.ok) { clearTimeout(t); const j = await r.json().catch(() => ({})); const e = new Error(j.error?.message || `Gemini ${r.status}`); e.status = r.status; throw e; }
+        if (akis) { clearTimeout(t); return { model: m, govde: r.body }; }
+        const j = await r.json().catch(() => ({})); clearTimeout(t);
         const text = (j.candidates?.[0]?.content?.parts || []).filter(p => !p.thought).map(p => p.text || '').join('').trim();
         if (!text) { son = new Error('Boş cevap geldi'); break; }
-        const gm = j.candidates?.[0]?.groundingMetadata || {};
-        const kaynaklar = (gm.groundingChunks || []).map(c => c.web).filter(w => w?.uri).map(w => ({ baslik: String(w.title || '').slice(0, 60), url: w.uri })).slice(0, 4);
-        return { text, model: m, kaynaklar };
+        return { text, model: m, kaynaklar: kaynakAl(j) };
       } catch (e) {
         clearTimeout(t); son = e; const msg = String(e.message || '');
-        if (e.name === 'AbortError') { son = new Error(`${m} zamanında cevap vermedi`); break; }
+        if (e.name === 'AbortError') { son = new Error('İmparator zamanında cevap veremedi, bir daha dene.'); aramaAcik = false; break; }
         if (/thinking/i.test(msg)) continue;
         if (aramaAcik && (e.status === 429 || /search|grounding|tool/i.test(msg))) { aramaAcik = false; i--; continue; }
         if (e.status === 401 || e.status === 403) throw new Error('Gemini anahtarı geçersiz ya da yetkisiz');
@@ -41,6 +45,38 @@ export async function gemini(env, { system, contents, arama = true, hafif = fals
   if (son && /quota|exhausted|429/i.test(son.message)) throw new Error('Gemini günlük kotası doldu; biraz sonra tekrar dene.');
   if (son && (son.status >= 500 || /overloaded|unavailable|internal/i.test(son.message))) throw new Error('Gemini şu an çok yoğun; biraz sonra tekrar dene.');
   throw son || new Error('Gemini cevap vermedi');
+}
+const kaynakAl = j => ((j.candidates?.[0]?.groundingMetadata || {}).groundingChunks || []).map(c => c.web).filter(w => w?.uri).map(w => ({ baslik: String(w.title || '').slice(0, 60), url: w.uri })).slice(0, 4);
+
+export function gemini(env, { system, contents, arama = true, hafif = false, sure = 45000, toplam = 90000, uzun = false }) {
+  return dene(env, { system, contents, arama, hafif, uzun, sure, toplam, akis: false });
+}
+
+// Akışlı cevap: yazı geldikçe parça parça iletilir (kullanıcı beklemeden okumaya başlar).
+// parca(t) her metin parçasında çağrılır; sonunda { text, model, kaynaklar } döner.
+export async function geminiAkis(env, { system, contents, arama = true, hafif = false, sure = 25000, toplam = 60000, uzun = false, parca }) {
+  const { model, govde } = await dene(env, { system, contents, arama, hafif, uzun, sure, toplam, akis: true });
+  const okuyucu = govde.getReader(), dec = new TextDecoder();
+  let tampon = '', text = '', kaynaklar = [];
+  const durdur = setTimeout(() => okuyucu.cancel().catch(() => {}), uzun ? 150000 : 90000);
+  const satir = s => {
+    if (!s.startsWith('data:')) return;
+    let j; try { j = JSON.parse(s.slice(5).trim()); } catch { return; }
+    const t = (j.candidates?.[0]?.content?.parts || []).filter(p => !p.thought).map(p => p.text || '').join('');
+    if (t) { text += t; parca?.(t); }
+    const k = kaynakAl(j); if (k.length) kaynaklar = k;
+  };
+  try {
+    for (;;) {
+      const { value, done } = await okuyucu.read(); if (done) break;
+      tampon += dec.decode(value, { stream: true });
+      let n; while ((n = tampon.indexOf('\n')) >= 0) { satir(tampon.slice(0, n).replace(/\r$/, '')); tampon = tampon.slice(n + 1); }
+    }
+    if (tampon) satir(tampon);
+  } finally { clearTimeout(durdur); }
+  text = text.trim();
+  if (!text) throw new Error('İmparator boş cevap verdi, bir daha dene.');
+  return { text, model, kaynaklar };
 }
 
 const tl = (n, k = 2) => (Number(n) || 0).toLocaleString('tr-TR', { minimumFractionDigits: k, maximumFractionDigits: k });

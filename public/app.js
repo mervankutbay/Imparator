@@ -1,7 +1,7 @@
 // İmparator — babanın hisse defteri. Sade, büyük yazılı; veriler Mervan'ın Google Sheet'inde (sunucu üzerinden).
 import { hesapla, sayi, kodTemiz, sirala, BIST, bistAd, TURLER, tavanTaban, fiyatAdimi } from './hesap.js';
 
-const SURUM = 'v7';
+const SURUM = 'v8';
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -36,6 +36,27 @@ async function api(yol, govde) {
   if (!r.ok) throw new Error(j.hata || 'Bağlantı sorunu');
   return j;
 }
+// Akışlı istek: İmparator yazdıkça parça parça gelir (parca(birikenMetin) çağrılır), sonunda son nesne döner
+async function akis(yol, govde, parca) {
+  let r;
+  try { r = await fetch('/api/' + yol, { method: 'POST', headers: { 'content-type': 'application/json', 'x-anahtar': S.anahtar }, body: JSON.stringify({ ...govde, akis: true }) }); }
+  catch { const e = new Error('İnternet bağlantısı yok'); e.ag = true; throw e; }
+  if (!/ndjson/.test(r.headers.get('content-type') || '') || !r.body) {
+    const j = await r.json().catch(() => ({}));
+    if (r.status === 401 && j.giris) { S.anahtar = ''; ls.yaz('imp_anahtar', ''); anahtarsiz(); throw new Error('Bağlantı geçersiz'); }
+    if (!r.ok) throw new Error(j.hata || 'Bağlantı sorunu');
+    return j;
+  }
+  const ok = r.body.getReader(), dec = new TextDecoder(); let tampon = '', metin = '', son = null;
+  const isle = s => { if (!s.trim()) return; let o; try { o = JSON.parse(s); } catch { return; } if (o.t) { metin += o.t; parca?.(metin); } else if (o.hata) throw new Error(o.hata); else if (o.son) son = o; };
+  try {
+    for (;;) { const { value, done } = await ok.read(); if (done) break; tampon += dec.decode(value, { stream: true }); let n; while ((n = tampon.indexOf('\n')) >= 0) { isle(tampon.slice(0, n)); tampon = tampon.slice(n + 1); } }
+    isle(tampon);
+  } catch (e) { if (e instanceof TypeError) { const x = new Error('Bağlantı koptu, bir daha dene.'); x.ag = true; throw x; } throw e; }
+  if (!son) throw new Error('Cevap yarım kaldı, bir daha dene.');
+  return son;
+}
+const bilinenKodlar = () => [...new Set([...hesapla(S.veri?.islemler || []).acik.map(p => p.kod), ...(S.veri?.takip || [])])];
 function veriKoy(v) { S.veri = { islemler: v.islemler || [], analizler: v.analizler || [], takip: v.takip || [], ayar: v.ayar || {} }; bekleyenUygula(); ls.yaz('imp_veri', S.veri); }
 // ---------- İnternet yokken yapılan kayıtlar: telefonda bekler, bağlantı gelince deftere yazılır ----------
 let dk = ls.al('imp_kuyruk', []);
@@ -628,9 +649,17 @@ function analizBolumu() {
   $('[data-devam]')?.addEventListener('click', () => { analizAcik = true; analizBolumu(); });
   $$('[data-eski]').forEach(b => b.onclick = () => { const w = pencere(analizHTML(l[Number(b.dataset.eski)], true)); });
   $('#simdi').onclick = async () => {
-    const b = $('#simdi'); b.disabled = true; b.textContent = 'İmparator piyasayı inceliyor… (30-60 sn)';
-    try { const a = await api('analiz', {}); S.veri.analizler = [a, ...S.veri.analizler]; ls.yaz('imp_veri', S.veri); analizAcik = true; analizBolumu(); scrollTo(0, 0); }
-    catch (e) { toast('Yazılamadı: ' + e.message, 5000); b.disabled = false; b.textContent = '✍️ Şimdi bir analiz yaz'; }
+    const b = $('#simdi'); b.disabled = true; b.textContent = 'İmparator piyasaya bakıyor…';
+    let kutu = null;
+    try {
+      const r = await akis('analiz', { kodlar: bilinenKodlar() }, metin => {
+        if (!kutu) { b.textContent = 'İmparator yazıyor…'; $('#impIc').insertAdjacentHTML('afterbegin', '<div id="canliAnaliz"></div>'); kutu = $('#canliAnaliz'); scrollTo(0, 0); }
+        const { baslik, govde } = (() => { const l = metin.replace(/\r/g, '').split('\n'); const i = l.findIndex(x => x.trim()); return { baslik: (l[i] || '').replace(/^#+\s*/, '').replace(/\*\*/g, ''), govde: l.slice(i + 1).join('\n') }; })();
+        kutu.innerHTML = analizHTML({ Baslik: baslik, Metin: govde, Tur: 'Güncel', Tarih: bugun(), Saat: 'şimdi' }, true);
+      });
+      const a = r.analiz || r; S.veri.analizler = [a, ...S.veri.analizler]; ls.yaz('imp_veri', S.veri); analizAcik = true; analizBolumu(); scrollTo(0, 0);
+    }
+    catch (e) { $('#canliAnaliz')?.remove(); toast('Yazılamadı: ' + e.message, 5000); b.disabled = false; b.textContent = '✍️ Şimdi bir analiz yaz'; }
   };
 }
 
@@ -732,7 +761,11 @@ async function gonder() {
   scrollTo(0, document.body.scrollHeight);
   try {
     const gecmis = S.sohbet.slice(-30).map(m => ({ role: m.role, text: m.text + (m.islemler?.length ? (m.durum === 'ok' ? '\n(Bu işlemler onaylandı ve deftere yazıldı.)' : m.durum === 'iptal' ? '\n(Kullanıcı bu işlemlerden vazgeçti.)' : '\n(İşlemler onay bekliyor.)') : '') }));
-    const r = await api('sohbet', { mesajlar: gecmis, ekler: foto ? [foto] : [], hafif: sayac() >= 20 });
+    const r = await akis('sohbet', { mesajlar: gecmis, ekler: foto ? [foto] : [], hafif: sayac() >= 20, kodlar: bilinenKodlar() }, metin => {
+      const y = $('#yaziyor'); if (!y) return;
+      const gor = metin.split('[[')[0].trim(); if (!gor) return;
+      y.classList.add('akiyor'); y.textContent = gor; scrollTo(0, document.body.scrollHeight);
+    });
     ls.yaz('imp_sayac', { gun: bugun(), n: sayac() + 1 });
     const { text: cevap, islemler } = islemAyikla(r.metin);
     S.sohbet.push({ role: 'model', text: cevap || '👍', ...(islemler.length ? { islemler } : {}), ...(r.kaynaklar?.length ? { kaynaklar: r.kaynaklar } : {}) });

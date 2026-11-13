@@ -189,3 +189,4 @@ main { -webkit-overflow-scrolling: touch; }
 .ara-kutu { margin-bottom: 4px; }
 .ara-giris { width: 100%; font-size: 1.05em; padding: 14px 16px; border-radius: 14px; border: 2px solid var(--cizgi); background: var(--kart); color: inherit; font-weight: 600; }
 .ara-giris:focus { outline: none; border-color: var(--marka); }
+.msj.akiyor { white-space: pre-wrap; }

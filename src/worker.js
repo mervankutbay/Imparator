@@ -10,10 +10,10 @@
 //   GEMINI_KEY      Gemini API anahtarı
 import * as SH from './sheets.js';
 import { fiyatlar, ara, PIYASA } from './piyasa.js';
-import { gemini, kisilik, veriOzeti, ISLEM_KURALI, analizIstemi, analizAyir, bugunTR } from './imparator.js';
+import { gemini, geminiAkis, kisilik, veriOzeti, ISLEM_KURALI, analizIstemi, analizAyir, bugunTR } from './imparator.js';
 import { hesapla, kodTemiz, sayi, TURLER } from '../public/hesap.js';
 
-const SURUM = 'v7';
+const SURUM = 'v8';
 const json = (o, status = 200) => new Response(JSON.stringify(o), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } });
 const esit = (a, b) => { if (!a || !b || a.length !== b.length) return false; let d = 0; for (let i = 0; i < a.length; i++) d |= a.charCodeAt(i) ^ b.charCodeAt(i); return d === 0; };
 const yetkili = (k, env) => esit(String(k || ''), String(env.GIZLI || ''));
@@ -40,18 +40,39 @@ async function veri(env) {
   };
 }
 
-async function analizYap(env, tur) {
-  const v = await veri(env);
+async function analizHazirla(env, tur, onKodlar) {
+  // Sheet okuma ile fiyatlar aynı anda (telefon bildiği kodları gönderir) — bekleme kısalır
+  const [v, fiyatOn] = await Promise.all([veri(env), onKodlar?.length ? fiyatlar(onKodlar, { enFazla: 20 }).catch(() => null) : null]);
   const h = hesapla(v.islemler);
-  const kodlar = [...new Set([...h.acik.map(p => p.kod), ...v.takip])];
-  const fiyat = await fiyatlar(kodlar, { enFazla: 20 }).catch(() => ({ piyasa: {}, hisseler: {} }));
+  const fiyat = fiyatOn || await fiyatlar([...new Set([...h.acik.map(p => p.kod), ...v.takip])], { enFazla: 20 }).catch(() => ({ piyasa: {}, hisseler: {} }));
   const ozet = veriOzeti({ islemler: v.islemler, ayar: v.ayar, takip: v.takip, fiyat, sonAnaliz: v.analizler[0] });
-  const r = await gemini(env, { system: kisilik(v.ayar), contents: [{ role: 'user', parts: [{ text: analizIstemi(tur, ozet) }] }], arama: true, sure: 90000, uzun: true });
+  return { system: kisilik(v.ayar), contents: [{ role: 'user', parts: [{ text: analizIstemi(tur, ozet) }] }] };
+}
+async function analizKaydet(env, tur, r) {
   const { baslik, metin } = analizAyir(r.text);
   const saat = new Intl.DateTimeFormat('tr-TR', { timeZone: 'Europe/Istanbul', hour: '2-digit', minute: '2-digit' }).format(new Date());
   const satir = { Tarih: bugunTR(), Saat: saat, 'Tür': tur, 'Başlık': baslik, 'Metin': metin + (r.kaynaklar.length ? '\n\nKaynaklar: ' + r.kaynaklar.map(k => k.baslik || k.url).join(' · ') : '') };
   await SH.ekle(env, 'Analizler', [satir]);
   return { Tarih: satir.Tarih, Saat: saat, Tur: tur, Baslik: baslik, Metin: satir.Metin };
+}
+async function analizYap(env, tur) {
+  const ist = await analizHazirla(env, tur);
+  return analizKaydet(env, tur, await gemini(env, { ...ist, arama: true, sure: 90000, toplam: 240000, uzun: true }));
+}
+// Akışlı cevap (satır satır JSON): {t:"parça"} … sonda {son:true, ...}. İlk parça gelene kadar hata olursa normal JSON hata döner.
+async function akisla(ctx, basla) {
+  const enc = new TextEncoder(), { readable, writable } = new TransformStream(), w = writable.getWriter();
+  const yaz = o => w.write(enc.encode(JSON.stringify(o) + '\n')).catch(() => {});
+  let ilk; const hazir = new Promise(r => (ilk = r));
+  const is = (async () => {
+    try { const son = await basla(t => { ilk(); yaz({ t }); }); ilk(); await yaz({ son: true, ...son }); }
+    catch (e) { ilk(e); await yaz({ hata: String(e.message || e).slice(0, 300) }); }
+    finally { w.close().catch(() => {}); }
+  })();
+  ctx?.waitUntil?.(is);
+  const hata = await hazir;
+  if (hata) return json({ hata: String(hata.message || hata).slice(0, 300) }, 500);
+  return new Response(readable, { headers: { 'content-type': 'application/x-ndjson; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' } });
 }
 
 export default {
@@ -112,19 +133,29 @@ export default {
       }
       if (p === '/api/sohbet' && request.method === 'POST') {
         const b = await request.json();
-        const v = await veri(env), h = hesapla(v.islemler);
-        const fiyat = await fiyatlar([...new Set([...h.acik.map(x => x.kod), ...v.takip])], { enFazla: 20 }).catch(() => ({ piyasa: {}, hisseler: {} }));
-        const system = `${kisilik(v.ayar)}\n\n${ISLEM_KURALI}\n\nVERİLER:\n${veriOzeti({ ...v, fiyat, sonAnaliz: v.analizler[0] })}${v.analizler[0] ? `\n\nSON ANALİZİN METNİ:\n${v.analizler[0].Metin.slice(0, 2500)}` : ''}`;
-        const contents = (b.mesajlar || []).slice(-30).map(m => ({ role: m.role === 'user' ? 'user' : 'model', parts: [{ text: String(m.text || '').slice(0, 4000) }] }));
+        const onKodlar = [...new Set((b.kodlar || []).map(kodTemiz).filter(Boolean))];
+        const [v, fiyatOn] = await Promise.all([veri(env), onKodlar.length ? fiyatlar(onKodlar, { enFazla: 20 }).catch(() => null) : null]);
+        const h = hesapla(v.islemler);
+        const fiyat = fiyatOn || await fiyatlar([...new Set([...h.acik.map(x => x.kod), ...v.takip])], { enFazla: 20 }).catch(() => ({ piyasa: {}, hisseler: {} }));
+        const system = `${kisilik(v.ayar)}\n\n${ISLEM_KURALI}\n\nVERİLER:\n${veriOzeti({ ...v, fiyat, sonAnaliz: v.analizler[0] })}${v.analizler[0] ? `\n\nSON ANALİZİN METNİ:\n${v.analizler[0].Metin.slice(0, 1500)}` : ''}`;
+        const contents = (b.mesajlar || []).slice(-20).map(m => ({ role: m.role === 'user' ? 'user' : 'model', parts: [{ text: String(m.text || '').slice(0, 4000) }] }));
         if (!contents.length) throw new Error('Mesaj yok');
         const ekler = (b.ekler || []).slice(0, 3).filter(e => e?.data && /^image\//.test(e.mime || ''));
         contents[contents.length - 1].parts.push(...ekler.map(e => ({ inline_data: { mime_type: e.mime, data: e.data } })));
-        const r = await gemini(env, { system, contents, arama: !ekler.length, hafif: !!b.hafif, sure: ekler.length ? 80000 : 45000, uzun: ekler.length > 0 });
+        const ayar = { system, contents, arama: !ekler.length, hafif: !!b.hafif, sure: ekler.length ? 45000 : 25000, toplam: ekler.length ? 90000 : 60000, uzun: ekler.length > 0 };
+        if (b.akis) return akisla(ctx, async parca => { const r = await geminiAkis(env, { ...ayar, parca }); return { metin: r.text, model: r.model, kaynaklar: r.kaynaklar }; });
+        const r = await gemini(env, ayar);
         return json({ metin: r.text, model: r.model, kaynaklar: r.kaynaklar });
       }
       if (p === '/api/analiz' && request.method === 'POST') {
         const b = await request.json().catch(() => ({}));
-        return json(await analizYap(env, ['Sabah', 'Akşam'].includes(b.tur) ? b.tur : 'Güncel'));
+        const tur = ['Sabah', 'Akşam'].includes(b.tur) ? b.tur : 'Güncel';
+        if (b.akis) return akisla(ctx, async parca => {
+          const ist = await analizHazirla(env, tur, b.kodlar);
+          const r = await geminiAkis(env, { ...ist, arama: true, sure: 40000, toplam: 90000, uzun: true, parca });
+          return { analiz: await analizKaydet(env, tur, r) };
+        });
+        return json(await analizYap(env, tur));
       }
       return json({ hata: 'bulunamadı' }, 404);
     } catch (e) {
